@@ -1,0 +1,22 @@
+services:
+  otokura:
+    build: .
+    image: otokura:latest
+    container_name: otokura
+    restart: unless-stopped
+    # NAS 上の自分のユーザーで動かす(`id` コマンドで確認した数字を .env に書く)
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${OTOKURA_PORT:-8686}:8686"
+    environment:
+      TZ: Asia/Tokyo
+      # 画面に出す名前=コンテナ内のパス(下の volumes と合わせる)
+      OTOKURA_SOURCES: "Lossless=/music/Lossless,1.Lossy=/music/1.Lossy"
+      OTOKURA_SCAN_AT: "03:00"     # 毎日の差分スキャン。空にすると自動では行わない
+      OTOKURA_LRCLIB: "1"          # 歌詞が無い曲だけ LRCLIB から探す。0 で無効
+    volumes:
+      # 音楽フォルダは読み取り専用(音蔵は音楽ファイルに書き込まない)
+      - "${MUSIC_LOSSLESS}:/music/Lossless:ro"
+      - "${MUSIC_LOSSY}:/music/1.Lossy:ro"
+      # データベースとカバーの縮小画像
+      - "${OTOKURA_DATA_DIR:-./data}:/data"

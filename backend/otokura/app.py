@@ -1,0 +1,313 @@
+"""音蔵の Web サーバー(FastAPI)。
+
+    uvicorn otokura.app:app --host 0.0.0.0 --port 8686
+"""
+from __future__ import annotations
+
+import json
+import logging
+import platform
+import time
+from pathlib import Path
+
+from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, Response
+
+from . import __version__, art, metadata
+from .config import Config, from_env
+from .db import Database
+from .lyrics.api import make_router as lyrics_router
+from .lyrics.lrclib import LrcLib
+from .lyrics.store import LyricsStore, TrackRef
+from .scanner import Scanner, Scheduler
+
+log = logging.getLogger("otokura")
+
+
+def create_app(cfg: Config | None = None, start_background: bool = True) -> FastAPI:
+    cfg = cfg or from_env()
+    cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    db = Database(cfg.db_path)
+    lyrics = LyricsStore(cfg.db_path, lrclib=LrcLib() if cfg.lrclib else None)
+    scanner = Scanner(db, cfg, lyrics)
+    src_by_id = {s.id: s for s in cfg.sources}
+
+    app = FastAPI(title="音蔵", version=__version__, docs_url="/api/docs", openapi_url="/api/openapi.json")
+    app.add_middleware(GZipMiddleware, minimum_size=2048)
+    app.state.cfg, app.state.db, app.state.scanner, app.state.lyrics = cfg, db, scanner, lyrics
+
+    def bump():
+        db.meta("library_version", str(time.time()))
+    scanner.on_done = bump
+
+    # ---------- 共通 ----------
+    def track_row(tid: int):
+        r = db.one("SELECT * FROM tracks WHERE id=?", (tid,))
+        if r is None:
+            raise HTTPException(404, "曲が見つかりません。ライブラリを再読み込みしてください")
+        return r
+
+    def track_path(r) -> Path:
+        src = src_by_id.get(r["source"])
+        if src is None:
+            raise HTTPException(404, "この曲のソースは設定から外されています")
+        p = (src.path / r["rel"]).resolve()
+        if src.path.resolve() not in p.parents:
+            raise HTTPException(400, "不正なパスです")
+        return p
+
+    def get_track_ref(tid: str) -> TrackRef | None:
+        try:
+            r = db.one("SELECT * FROM tracks WHERE id=?", (int(tid),))
+        except ValueError:
+            return None
+        if r is None or r["source"] not in src_by_id:
+            return None
+        return TrackRef(str(r["id"]), str(src_by_id[r["source"]].path / r["rel"]), r["title"], r["artist"],
+                        r["album"], r["duration_ms"])
+
+    def stat_key(tid: int):
+        r = track_row(tid)
+        return r["source"], r["rel"]
+
+    def ensure_stat(source: str, rel: str):
+        db.conn.execute("INSERT OR IGNORE INTO track_stats(source,rel) VALUES(?,?)", (source, rel))
+
+    # ---------- ライブラリ ----------
+    @app.get("/api/library")
+    def library(request: Request):
+        """画面が起動時に読む一覧。配列は先頭の columns の順。"""
+        ver = db.meta("library_version") or "0"
+        albums = db.q("SELECT id,title,artist,year,genre,source,folder,art IS NOT NULL AS has_art,hue,added_at "
+                      "FROM albums ORDER BY id")
+        tracks = db.q(
+            "SELECT t.id,t.album_id,t.disc_no,t.track_no,t.title,t.artist,t.duration_ms,t.codec,t.sample_rate,"
+            "t.bit_depth,t.bitrate,t.rel,t.source,COALESCE(s.plays,0) plays,s.last_played,COALESCE(s.skips,0) skips,"
+            "COALESCE(s.fav,0) fav,COALESCE(s.rating,0) rating,t.tag_fixed,t.tag_guessed "
+            "FROM tracks t LEFT JOIN track_stats s ON s.source=t.source AND s.rel=t.rel "
+            "ORDER BY t.album_id, COALESCE(t.disc_no,1), COALESCE(t.track_no,9999), t.rel")
+        return {
+            "version": ver,
+            "now": time.time(),
+            "sources": [{"id": s.id, "name": s.name, "path": str(s.path)} for s in cfg.sources],
+            "playable": sorted(metadata.BROWSER_PLAYABLE),
+            "albumColumns": ["id", "title", "artist", "year", "genre", "source", "folder", "hasArt", "hue", "addedAt"],
+            "albums": [list(r) for r in albums],
+            "trackColumns": ["id", "albumId", "disc", "no", "title", "artist", "durationMs", "codec", "sampleRate",
+                             "bitDepth", "kbps", "rel", "source", "plays", "lastPlayed", "skips", "fav", "rating",
+                             "tagFixed", "tagGuessed"],
+            "tracks": [list(r) for r in tracks],
+        }
+
+    @app.get("/api/tracks/{tid}/stream")
+    def stream(tid: int):
+        r = track_row(tid)
+        if r["codec"] not in metadata.BROWSER_PLAYABLE:
+            raise HTTPException(415, f"{r['codec']} の再生は次の段階(変換配信)で対応します")
+        p = track_path(r)
+        if not p.is_file():
+            raise HTTPException(404, "ファイルが見つかりません。再スキャンしてください")
+        return FileResponse(p, media_type=metadata.MIME.get(r["codec"], "application/octet-stream"),
+                            headers={"Cache-Control": "private, max-age=3600"})
+
+    @app.get("/api/art/{album_id}")
+    def album_art(album_id: int, size: int = 300):
+        r = db.one("SELECT art FROM albums WHERE id=?", (album_id,))
+        if r is None or not r["art"]:
+            raise HTTPException(404, "カバー画像がありません")
+        p = art.thumb_path(cfg.art_dir, r["art"], size)
+        if not p.is_file():
+            raise HTTPException(404, "カバー画像がありません")
+        return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+    # ---------- 再生記録・お気に入り・評価 ----------
+    @app.post("/api/tracks/{tid}/played")
+    def played(tid: int):
+        s, rel = stat_key(tid)
+        with db.write_lock:
+            ensure_stat(s, rel)
+            db.conn.execute("UPDATE track_stats SET plays=plays+1, last_played=? WHERE source=? AND rel=?",
+                            (time.time(), s, rel))
+            db.conn.commit()
+        return stats(tid)
+
+    @app.post("/api/tracks/{tid}/skipped")
+    def skipped(tid: int):
+        s, rel = stat_key(tid)
+        with db.write_lock:
+            ensure_stat(s, rel)
+            db.conn.execute("UPDATE track_stats SET skips=skips+1 WHERE source=? AND rel=?", (s, rel))
+            db.conn.commit()
+        return stats(tid)
+
+    @app.put("/api/tracks/{tid}/stats")
+    def put_stats(tid: int, body: dict = Body(...)):
+        s, rel = stat_key(tid)
+        with db.write_lock:
+            ensure_stat(s, rel)
+            if "fav" in body:
+                db.conn.execute("UPDATE track_stats SET fav=? WHERE source=? AND rel=?", (int(bool(body["fav"])), s, rel))
+            if "rating" in body:
+                v = max(0, min(5, int(body["rating"])))
+                db.conn.execute("UPDATE track_stats SET rating=? WHERE source=? AND rel=?", (v, s, rel))
+            db.conn.commit()
+        return stats(tid)
+
+    @app.get("/api/tracks/{tid}/stats")
+    def stats(tid: int):
+        s, rel = stat_key(tid)
+        r = db.one("SELECT * FROM track_stats WHERE source=? AND rel=?", (s, rel))
+        return {"id": tid, "plays": r["plays"] if r else 0, "lastPlayed": r["last_played"] if r else None,
+                "skips": r["skips"] if r else 0, "fav": bool(r and r["fav"]), "rating": r["rating"] if r else 0}
+
+    # ---------- プレイリスト ----------
+    def pl_out(p) -> dict:
+        items = db.q("SELECT t.id FROM playlist_items i JOIN tracks t ON t.source=i.source AND t.rel=i.rel "
+                     "WHERE i.playlist_id=? ORDER BY i.pos", (p["id"],))
+        missing = db.one("SELECT COUNT(*) n FROM playlist_items i LEFT JOIN tracks t ON t.source=i.source AND "
+                         "t.rel=i.rel WHERE i.playlist_id=? AND t.id IS NULL", (p["id"],))["n"]
+        return {"id": p["id"], "name": p["name"], "rule": json.loads(p["rule"]) if p["rule"] else None,
+                "trackIds": [r["id"] for r in items], "missing": missing, "updatedAt": p["updated_at"]}
+
+    def set_items(pid: int, ids: list[int]):
+        c = db.conn
+        c.execute("DELETE FROM playlist_items WHERE playlist_id=?", (pid,))
+        pos = 0
+        for tid in ids:
+            r = db.one("SELECT source, rel FROM tracks WHERE id=?", (int(tid),))
+            if r:
+                c.execute("INSERT INTO playlist_items(playlist_id,pos,source,rel) VALUES(?,?,?,?)",
+                          (pid, pos, r["source"], r["rel"]))
+                pos += 1
+
+    @app.get("/api/playlists")
+    def playlists():
+        return [pl_out(p) for p in db.q("SELECT * FROM playlists ORDER BY name COLLATE NOCASE")]
+
+    @app.post("/api/playlists")
+    def create_playlist(body: dict = Body(...)):
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(422, "プレイリストの名前を入力してください")
+        rule = body.get("rule")
+        with db.write_lock:
+            now = time.time()
+            cur = db.conn.execute("INSERT INTO playlists(name,rule,created_at,updated_at) VALUES(?,?,?,?)",
+                                  (name, json.dumps(rule, ensure_ascii=False) if rule else None, now, now))
+            set_items(cur.lastrowid, body.get("trackIds") or [])
+            db.conn.commit()
+        return pl_out(db.one("SELECT * FROM playlists WHERE id=?", (cur.lastrowid,)))
+
+    @app.put("/api/playlists/{pid}")
+    def update_playlist(pid: int, body: dict = Body(...)):
+        p = db.one("SELECT * FROM playlists WHERE id=?", (pid,))
+        if p is None:
+            raise HTTPException(404, "プレイリストが見つかりません")
+        with db.write_lock:
+            if "name" in body and str(body["name"]).strip():
+                db.conn.execute("UPDATE playlists SET name=? WHERE id=?", (str(body["name"]).strip(), pid))
+            if "rule" in body:
+                db.conn.execute("UPDATE playlists SET rule=? WHERE id=?",
+                                (json.dumps(body["rule"], ensure_ascii=False) if body["rule"] else None, pid))
+            if "trackIds" in body:
+                set_items(pid, body["trackIds"])
+            if "addTrackIds" in body:
+                cur_ids = pl_out(p)["trackIds"]
+                set_items(pid, cur_ids + list(body["addTrackIds"]))
+            db.conn.execute("UPDATE playlists SET updated_at=? WHERE id=?", (time.time(), pid))
+            db.conn.commit()
+        return pl_out(db.one("SELECT * FROM playlists WHERE id=?", (pid,)))
+
+    @app.delete("/api/playlists/{pid}")
+    def delete_playlist(pid: int):
+        with db.write_lock:
+            db.conn.execute("DELETE FROM playlists WHERE id=?", (pid,))
+            db.conn.commit()
+        return {"ok": True}
+
+    # ---------- 設定 ----------
+    @app.get("/api/settings")
+    def get_settings():
+        return {r["key"]: json.loads(r["value"]) for r in db.q("SELECT key, value FROM settings")}
+
+    @app.put("/api/settings")
+    def put_settings(body: dict = Body(...)):
+        with db.write_lock:
+            for k, v in body.items():
+                db.conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                                (str(k), json.dumps(v, ensure_ascii=False)))
+            db.conn.commit()
+        return get_settings()
+
+    # ---------- サーバー・スキャン ----------
+    @app.get("/api/server")
+    def server():
+        counts = {r["source"]: r["n"] for r in db.q("SELECT source, COUNT(*) n FROM tracks GROUP BY source")}
+        last = db.meta("last_scan")
+        unplayable = db.q("SELECT codec, COUNT(*) n FROM tracks GROUP BY codec ORDER BY n DESC")
+        return {
+            "version": __version__,
+            "python": platform.python_version(),
+            "sources": [{"id": s.id, "name": s.name, "path": str(s.path), "ok": s.path.is_dir(),
+                         "tracks": counts.get(s.id, 0)} for s in cfg.sources],
+            "lastScan": float(last) if last else None,
+            "scanAt": cfg.scan_at,
+            "scan": scanner.state.public(),
+            "codecs": [{"codec": r["codec"], "tracks": r["n"], "playable": r["codec"] in metadata.BROWSER_PLAYABLE}
+                       for r in unplayable],
+            "lrclib": cfg.lrclib,
+            "dataDir": str(cfg.data_dir),
+        }
+
+    @app.get("/api/scan")
+    def scan_state():
+        return scanner.state.public()
+
+    @app.post("/api/scan")
+    def scan(full: bool = False):
+        started = scanner.start(full=full)
+        return {"started": started, **scanner.state.public()}
+
+    app.include_router(lyrics_router(lyrics, get_track_ref), prefix="/api")
+
+    # ---------- 画面 ----------
+    @app.get("/", response_class=HTMLResponse)
+    def index():
+        if not cfg.web_dir or not (cfg.web_dir / "index.html").is_file():
+            return HTMLResponse("<p>web/index.html が見つかりません</p>", status_code=500)
+        html = (cfg.web_dir / "index.html").read_text(encoding="utf-8")
+        inject = "<script>window.OTOKURA_API='';</script>"
+        html = html.replace("<head>", "<head>" + inject, 1) if "<head>" in html else inject + html
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/healthz")
+    def healthz():
+        return {"ok": True}
+
+    if start_background:
+        @app.on_event("startup")
+        def _start():
+            if cfg.scan_on_start:
+                scanner.start()
+            if cfg.scan_at:
+                Scheduler(scanner, cfg.scan_at).start()
+
+    return app
+
+
+def _lazy_app():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    return create_app()
+
+
+_app = None
+
+
+def __getattr__(name):     # `uvicorn otokura.app:app` で初めて作る(テストで import しても起動しない)
+    global _app
+    if name == "app":
+        if _app is None:
+            _app = _lazy_app()
+        return _app
+    raise AttributeError(name)
