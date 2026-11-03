@@ -310,7 +310,8 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
     padding:8px max(20px,env(safe-area-inset-right,0px)) 8px max(20px,env(safe-area-inset-left,0px))}
   .xtop{grid-column:2;grid-row:1}
   .xl{grid-column:1;grid-row:1/3;display:flex;flex-direction:column;justify-content:center;gap:8px;min-height:0}
-  .xr{grid-column:2;grid-row:2;display:flex;flex-direction:column;justify-content:center;gap:8px;min-height:0;overflow:auto}
+  .xr{grid-column:2;grid-row:2;display:flex;flex-direction:column;justify-content:safe center;gap:8px;min-height:0;overflow:auto;scrollbar-width:none}
+  .xr::-webkit-scrollbar{display:none}
   .xart{width:min(calc(100dvh - 32px),46vw);margin:0}
   .xl:has(.lprev:not([hidden])) .xart{width:min(calc(100dvh - 104px),46vw)}
   .xl:has(.lyrwrap){width:52vw;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;align-content:stretch}
@@ -324,6 +325,24 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
   .ctl .ib{width:44px;height:44px}
   .pbig{width:60px;height:60px;border-radius:22px}.pbig.playing{border-radius:30px}
   .xbot{margin-top:0;padding-top:0}
+}
+/* アプリとして開いた横向き(上下にシステムの帯があり 300px 前後しかない)では詰める */
+@media (orientation:landscape) and (max-height:360px){
+  .xp .in{padding-top:4px;padding-bottom:4px}
+  .xart{width:min(calc(100dvh - 16px),46vw)}
+  .xtop .ib{width:36px;height:36px}
+  .xtop .ctx small{display:none}
+  .xr{gap:4px}
+  .xinfo h2{font-size:17px;line-height:1.25}
+  .xinfo .sub{font-size:13px}
+  .xinfo .ib{width:36px;height:36px}
+  .xchips{display:none}
+  .stars button{width:26px;height:26px}
+  .stars svg{width:20px;height:20px}
+  .wave{height:28px}
+  .ctl .ib{width:40px;height:40px}
+  .pbig{width:50px;height:50px;border-radius:18px}.pbig.playing{border-radius:25px}
+  .xbot button{padding:2px 6px;font-size:10px}
 }
 
 /* sheet */
