@@ -227,6 +227,7 @@ button.chip[aria-pressed="true"],button.chip[aria-selected="true"]{background:va
 @keyframes glow{to{transform:scale(1.15) translate(2%,3%)}}
 .xp .in{position:relative;max-width:540px;margin:0 auto;padding:6px 22px 20px;display:flex;flex-direction:column;gap:12px;min-height:100%}
 .xtop{display:flex;align-items:center;gap:4px}
+.xtop .ib.act{background:var(--pc);color:var(--on-pc)}
 .xtop .ctx{flex:1;text-align:center;min-width:0}
 .xtop .ctx small{display:block;color:var(--muted);font-size:12px}
 .xtop .ctx b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px}
@@ -391,6 +392,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 <script>
 /* ================= icons ================= */
 const P={
+bulb:"M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z",
 home:"M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z",
 lib:"M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 5h-3v5.5a2.5 2.5 0 1 1-2-2.45V5h5v2zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6z",
 album:"M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5zm0-5.5c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z",
@@ -1117,7 +1119,7 @@ function renderXP(){
     :`<div class="xart ${st.playing?'':'is-paused'}" data-act="artTap" style="background:${artBg(al,1000)}"><span class="paused">${ico('play',64)}</span></div>`
      +(S.np_lyrprev?`<div class="lprev" id="lprev" data-act="lyrToggle" role="button" tabindex="0" aria-label="歌詞を開く" hidden></div>`:'');
   x.querySelector('#xin').innerHTML=`<div class="xtop"><button class="ib" data-act="xpClose" aria-label="閉じる">${ico('down')}</button>
-      <div class="ctx"><small>再生中</small><b>${esc(al.t)}</b></div><button class="ib" data-act="menu" data-k="song" data-id="${s.id}" aria-label="メニュー">${ico('more')}</button></div>
+      <div class="ctx"><small>再生中</small><b>${esc(al.t)}</b></div>${'wakeLock' in navigator?`<button class="ib ${wake.on?'act':''}" data-act="wakeToggle" aria-label="画面を消さない" aria-pressed="${wake.on}" title="画面を消さない">${ico('bulb')}</button>`:''}<button class="ib" data-act="menu" data-k="song" data-id="${s.id}" aria-label="メニュー">${ico('more')}</button></div>
     <div class="xl">${art}</div><div class="xr">
     <div class="xinfo"><div class="tt"><h2>${esc(s.t)}</h2><div class="sub"><a href="${href('artist/'+al.a)}" data-act="goArtist" data-n="${esc(al.a)}">${esc(s.ar||al.a)}</a> ・ <a href="${href('album/'+al.id)}" data-act="goAlbum" data-id="${al.id}">${esc(al.t)}</a></div></div>
       <button class="ib ${s.fav?'fav-on':''}" data-act="fav" data-id="${s.id}" aria-label="お気に入り">${ico(s.fav?'heart':'heart0',26)}</button></div>
@@ -1295,6 +1297,18 @@ function plPickSheet(id){
 
 /* ================= misc ================= */
 let tt=null;
+// 画面を消さない(Screen Wake Lock)。この端末だけの設定なのでサーバーには保存しない。
+// 別のアプリに切り替えると OS が解除するので、戻ってきたら取り直す
+const wake={on:false,lock:null};
+try{wake.on=localStorage.getItem('otokura.wake')==='1';}catch(e){}
+async function wakeApply(){
+  if(!('wakeLock' in navigator))return;
+  if(wake.on&&document.visibilityState==='visible'&&!wake.lock){
+    try{wake.lock=await navigator.wakeLock.request('screen');wake.lock.addEventListener('release',()=>{wake.lock=null;});}catch(e){}
+  }else if(!wake.on&&wake.lock){wake.lock.release();wake.lock=null;}
+}
+document.addEventListener('visibilitychange',wakeApply);
+wakeApply();
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2600);}
 const scan={on:false,pct:0,t:null};
 function updateScan(){
@@ -1322,6 +1336,8 @@ const ACT={
   next:()=>step(1),prev:()=>step(-1),
   artTap:()=>{if(st.set.np_tap==='lyrics'){st.lyr=true;loadLyrics(cur().id);renderXP();}else setPlaying(!st.playing);},
   lyrToggle:()=>{st.lyr=!st.lyr;if(st.lyr)loadLyrics(cur().id);renderXP();},
+  wakeToggle:()=>{wake.on=!wake.on;try{localStorage.setItem('otokura.wake',wake.on?'1':'0');}catch(e){}
+    wakeApply();toast(wake.on?'画面を消さないようにしました':'画面が自動で消えるように戻しました');renderXP();},
   lyrSeek:d=>{const s=cur();st.pos=Math.max(0,(+d.ms-lyrOffset(s.id))/1000+.02);if(lyrDom){lyrDom.userAt=-1e9;lyrDom.target=null;}if(!st.playing)setPlaying(true);else{updateProg();renderMini();}},
   lyrResume:()=>{if(lyrDom){lyrDom.userAt=-1e9;lyrDom.target=null;}},
   lyrReload:()=>loadLyrics(cur().id,true),
