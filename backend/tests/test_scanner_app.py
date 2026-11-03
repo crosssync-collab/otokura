@@ -150,7 +150,7 @@ def test_pwa_files(client):
     assert 'rel="manifest"' in c.get("/").text
     m = c.get("/manifest.webmanifest")
     assert m.headers["content-type"].startswith("application/manifest+json")
-    assert m.json()["display"] == "standalone" and {i["sizes"] for i in m.json()["icons"]} >= {"192x192", "512x512"}
+    assert m.json()["display"] == "fullscreen" and {i["sizes"] for i in m.json()["icons"]} >= {"192x192", "512x512"}
     sw = c.get("/sw.js")
     assert "javascript" in sw.headers["content-type"] and sw.headers["cache-control"] == "no-cache"
     assert c.get("/icon-192.png").headers["content-type"] == "image/png"
