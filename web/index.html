@@ -328,13 +328,14 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
   .pbig{width:60px;height:60px;border-radius:22px}.pbig.playing{border-radius:30px}
   .xbot{margin-top:0;padding-top:0}
   /* 歌詞だけを表示: 操作パネルを隠して歌詞を横いっぱいに */
-  .lfbtn{display:grid!important}
-  .xp.lyrfull .lfplay{display:grid!important}
+  .xp.lyrfull .lfbtn,.xp.lyrfull .lfplay{display:grid!important}
   .xp.lyrfull .in{grid-template-columns:minmax(0,1fr)}
   .xp.lyrfull .xtop,.xp.lyrfull .xr{display:none}
   .xp.lyrfull .xl:has(.lyrwrap){width:auto}
-  .xp.lyrfull .lyr{--fs:32px;padding-left:max(24px,6vw);padding-right:max(24px,6vw)}
-  .xp.lyrfull .lyr.fs-s{--fs:26px} .xp.lyrfull .lyr.fs-l{--fs:40px}
+  .xp.lyrfull .lyr{--fs:clamp(30px,10dvh,48px);padding-left:max(24px,4vw);padding-right:max(24px,4vw)}
+  .xp.lyrfull .lyr.fs-s{--fs:clamp(24px,8dvh,40px)} .xp.lyrfull .lyr.fs-l{--fs:clamp(36px,12dvh,58px)}
+  .xp.lyrfull .ll{text-align:center;transform-origin:center}
+  .xp.lyrfull .gap{justify-content:center}
 }
 /* アプリとして開いた横向き(上下にシステムの帯があり 300px 前後しかない)では詰める */
 @media (orientation:landscape) and (max-height:360px){
@@ -401,7 +402,6 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 <script>
 /* ================= icons ================= */
 const P={
-fs:"M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z",
 fsexit:"M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z",
 bulb:"M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z",
 home:"M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z",
@@ -1037,9 +1037,10 @@ function lyrBar(s){
     ${ly.synced||est?`<span class="offc" title="ずれの補正(＋で歌詞を早く出す)"><button data-act="lyrOff" data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す">−</button><output id="lyroff">${(off>0?'+':'')+(off/1000).toFixed(1)}秒</output><button data-act="lyrOff" data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す">＋</button></span>`:''}
     <button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
 }
-// 横向きのときだけ出す「歌詞だけを表示」と、そのときの再生・一時停止
+const LANDSCAPE='(orientation:landscape) and (max-height:600px)';
+// 歌詞だけ(全画面)のときに歌詞バーに出す、再生・一時停止と「操作パネルに戻る」
 const lyrFullBtns=()=>`<button class="ib sm lfplay" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',20)}</button>`
-  +`<button class="ib sm lfbtn ${st.lyrFull?'on':''}" data-act="lyrFull" aria-label="${st.lyrFull?'操作パネルも表示':'歌詞だけを表示'}" aria-pressed="${!!st.lyrFull}">${ico(st.lyrFull?'fsexit':'fs',20)}</button>`;
+  +`<button class="ib sm lfbtn" data-act="lyrFull" aria-label="操作パネルも表示">${ico('fsexit',20)}</button>`;
 function lyrFrame(){
   requestAnimationFrame(lyrFrame);
   if(!st.xp)return;const s=cur();if(!s)return;
@@ -1373,8 +1374,13 @@ const ACT={
   toggle:(d,el,e)=>{e&&e.stopPropagation();setPlaying(!st.playing);},
   next:()=>step(1),prev:()=>step(-1),
   artTap:()=>{if(st.set.np_tap==='lyrics'){st.lyr=true;loadLyrics(cur().id);renderXP();}else setPlaying(!st.playing);},
-  lyrToggle:()=>{st.lyr=!st.lyr;if(st.lyr)loadLyrics(cur().id);renderXP();},
-  lyrFull:()=>{st.lyrFull=!st.lyrFull;renderXP();},
+  // 歌詞ボタン: 横向きのスマホでは 写真 → 歌詞 → 歌詞だけ(全画面) → 写真、縦向きでは 写真 ↔ 歌詞
+  lyrToggle:()=>{const wide=matchMedia(LANDSCAPE).matches;
+    if(!st.lyr){st.lyr=true;st.lyrFull=false;loadLyrics(cur().id);}
+    else if(wide&&!st.lyrFull)st.lyrFull=true;
+    else{st.lyr=false;st.lyrFull=false;}
+    renderXP();},
+  lyrFull:()=>{st.lyrFull=false;renderXP();},
   wakeToggle:()=>{wake.on=!wake.on;try{localStorage.setItem('otokura.wake',wake.on?'1':'0');}catch(e){}
     wakeApply();toast(wake.on?'画面を消さないようにしました':'画面が自動で消えるように戻しました');renderXP();},
   lyrSeek:d=>{const s=cur();st.pos=Math.max(0,(+d.ms-lyrOffset(s.id))/1000+.02);if(lyrDom){lyrDom.userAt=-1e9;lyrDom.target=null;}if(!st.playing)setPlaying(true);else{updateProg();renderMini();}},
