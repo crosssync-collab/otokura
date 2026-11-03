@@ -306,6 +306,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xbot button.on{color:var(--pri)}
 /* 再生中画面: 縦はそのまま並べ、スマホの横向きでは左にカバー(歌詞)、右に操作 */
 .xl,.xr{display:contents}
+.lfbtn,.lfplay{display:none!important}
 @media (orientation:landscape) and (max-height:600px){
   .xp .in{max-width:none;height:100%;min-height:0;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:0 28px;
     padding:8px max(20px,env(safe-area-inset-right,0px)) 8px max(20px,env(safe-area-inset-left,0px))}
@@ -326,6 +327,14 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
   .ctl .ib{width:44px;height:44px}
   .pbig{width:60px;height:60px;border-radius:22px}.pbig.playing{border-radius:30px}
   .xbot{margin-top:0;padding-top:0}
+  /* 歌詞だけを表示: 操作パネルを隠して歌詞を横いっぱいに */
+  .lfbtn{display:grid!important}
+  .xp.lyrfull .lfplay{display:grid!important}
+  .xp.lyrfull .in{grid-template-columns:minmax(0,1fr)}
+  .xp.lyrfull .xtop,.xp.lyrfull .xr{display:none}
+  .xp.lyrfull .xl:has(.lyrwrap){width:auto}
+  .xp.lyrfull .lyr{--fs:32px;padding-left:max(24px,6vw);padding-right:max(24px,6vw)}
+  .xp.lyrfull .lyr.fs-s{--fs:26px} .xp.lyrfull .lyr.fs-l{--fs:40px}
 }
 /* アプリとして開いた横向き(上下にシステムの帯があり 300px 前後しかない)では詰める */
 @media (orientation:landscape) and (max-height:360px){
@@ -392,6 +401,8 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 <script>
 /* ================= icons ================= */
 const P={
+fs:"M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z",
+fsexit:"M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z",
 bulb:"M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z",
 home:"M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z",
 lib:"M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 5h-3v5.5a2.5 2.5 0 1 1-2-2.45V5h5v2zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6z",
@@ -1018,14 +1029,17 @@ function updatePreview(s,t){
 }
 function lyrBar(s){
   const c=lyrCache.get(s.id),d=c&&c.data,ly=d&&d.lyrics;
-  if(!ly||!ly.layers||!ly.layers.length||ly.instrumental)return `<div class="lyrbar"><span class="sp"></span><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button></div>`;
+  if(!ly||!ly.layers||!ly.layers.length||ly.instrumental)return `<div class="lyrbar"><span class="sp"></span><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
   const est=(lyrMain(s,ly)||{}).estimated,step=est?1000:100;
   const sync=ly.hasWords?'語ごと':ly.synced?'行ごと':est?'時刻は推定':'同期なし';
   const off=d.offsetMs||0;
   return `<div class="lyrbar"><span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。ずれたら − ＋ で合わせてください':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
     ${ly.synced||est?`<span class="offc" title="ずれの補正(＋で歌詞を早く出す)"><button data-act="lyrOff" data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す">−</button><output id="lyroff">${(off>0?'+':'')+(off/1000).toFixed(1)}秒</output><button data-act="lyrOff" data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す">＋</button></span>`:''}
-    <button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button></div>`;
+    <button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
 }
+// 横向きのときだけ出す「歌詞だけを表示」と、そのときの再生・一時停止
+const lyrFullBtns=()=>`<button class="ib sm lfplay" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',20)}</button>`
+  +`<button class="ib sm lfbtn ${st.lyrFull?'on':''}" data-act="lyrFull" aria-label="${st.lyrFull?'操作パネルも表示':'歌詞だけを表示'}" aria-pressed="${!!st.lyrFull}">${ico(st.lyrFull?'fsexit':'fs',20)}</button>`;
 function lyrFrame(){
   requestAnimationFrame(lyrFrame);
   if(!st.xp)return;const s=cur();if(!s)return;
@@ -1138,7 +1152,7 @@ function renderMini(){
 function renderXP(){
   if(!cur()){$('#xp').classList.remove('open');return;}
   const x=$('#xp'),s=cur(),al=alOf(s),S=st.set,o=OUTS.find(z=>z[0]===st.out),ci=chipsFor(al,s);
-  x.className='xp '+(st.xp?'open ':'')+'bg-'+S.np_bg;
+  x.className='xp '+(st.xp?'open ':'')+'bg-'+S.np_bg+(st.lyr&&st.lyrFull?' lyrfull':'');
   const art=st.lyr?`<div class="lyrwrap" id="lyrslot"></div>${lyrBar(s)}`
     :`<div class="xart ${st.playing?'':'is-paused'}" data-act="artTap" style="background:${artBg(al,1000)}"><span class="paused">${ico('play',64)}</span></div>`
      +(S.np_lyrprev?`<div class="lprev" id="lprev" data-act="lyrToggle" role="button" tabindex="0" aria-label="歌詞を開く" hidden></div>`:'');
@@ -1360,6 +1374,7 @@ const ACT={
   next:()=>step(1),prev:()=>step(-1),
   artTap:()=>{if(st.set.np_tap==='lyrics'){st.lyr=true;loadLyrics(cur().id);renderXP();}else setPlaying(!st.playing);},
   lyrToggle:()=>{st.lyr=!st.lyr;if(st.lyr)loadLyrics(cur().id);renderXP();},
+  lyrFull:()=>{st.lyrFull=!st.lyrFull;renderXP();},
   wakeToggle:()=>{wake.on=!wake.on;try{localStorage.setItem('otokura.wake',wake.on?'1':'0');}catch(e){}
     wakeApply();toast(wake.on?'画面を消さないようにしました':'画面が自動で消えるように戻しました');renderXP();},
   lyrSeek:d=>{const s=cur();st.pos=Math.max(0,(+d.ms-lyrOffset(s.id))/1000+.02);if(lyrDom){lyrDom.userAt=-1e9;lyrDom.target=null;}if(!st.playing)setPlaying(true);else{updateProg();renderMini();}},
