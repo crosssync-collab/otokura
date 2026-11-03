@@ -18,6 +18,7 @@ from . import __version__, art, metadata
 from .config import Config, from_env
 from .db import Database
 from .lyrics.api import make_router as lyrics_router
+from .lyrics.folder import LyricsFolder
 from .lyrics.lrclib import LrcLib
 from .lyrics.store import LyricsStore, TrackRef
 from .scanner import Scanner, Scheduler
@@ -29,7 +30,8 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     cfg = cfg or from_env()
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     db = Database(cfg.db_path)
-    lyrics = LyricsStore(cfg.db_path, lrclib=LrcLib() if cfg.lrclib else None)
+    lyrics = LyricsStore(cfg.db_path, lrclib=LrcLib() if cfg.lrclib else None,
+                         folder=LyricsFolder(cfg.lyrics_dirs) if cfg.lyrics_dirs else None)
     scanner = Scanner(db, cfg, lyrics)
     src_by_id = {s.id: s for s in cfg.sources}
 

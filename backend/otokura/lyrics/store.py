@@ -1,6 +1,6 @@
 """歌詞の保存(SQLite)。
 
-- lyrics_local : スキャンで手元(サイドカー/タグ)から読んだ結果。ファイルの更新時刻で差分更新
+- lyrics_local : スキャンで手元(サイドカー/タグ、無ければ歌詞フォルダ)から読んだ結果。ファイルの更新時刻で差分更新
 - lyrics_user  : 利用者の手動登録・LRCLIB 取得結果・ずれ補正(音楽ファイルには書き込まない)
 表示に使う歌詞の優先順位: 手動 > 手元 > LRCLIB
 """
@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .encoding import decode_bytes
+from .folder import LyricsFolder
 from .lrc import looks_like_lrc, parse_lrc, parse_plain
 from .lrclib import LrcLib, Query
 from .model import Lyrics
@@ -55,13 +56,18 @@ class TrackRef:
     duration_ms: int | None = None
 
 
-def _signature(audio: Path) -> str:
+def _signature(audio: Path, folder_files: list[Path] = ()) -> str:
     parts = []
     for p in [audio, *sorted(find_sidecars(audio).values())]:
         try:
             parts.append([p.name, round(p.stat().st_mtime, 3)])
         except OSError:
             parts.append([p.name, None])
+    for p in folder_files:     # 歌詞フォルダで見つかったファイル(増えた・変わったら読み直す)
+        try:
+            parts.append([str(p), round(p.stat().st_mtime, 3)])
+        except OSError:
+            parts.append([str(p), None])
     return json.dumps(parts, ensure_ascii=False)
 
 
@@ -87,23 +93,27 @@ def _locked(fn):
 
 
 class LyricsStore:
-    def __init__(self, db_path: str | Path, lrclib: LrcLib | None = None):
+    def __init__(self, db_path: str | Path, lrclib: LrcLib | None = None, folder: LyricsFolder | None = None):
         self.lock = threading.RLock()
         self.db = sqlite3.connect(str(db_path), check_same_thread=False, timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         self.lrclib = lrclib
+        self.folder = folder
 
     # ---------- スキャン ----------
     @_locked
     def refresh(self, t: TrackRef, force: bool = False) -> bool:
         """手元の歌詞を必要なら読み直す。読み直したら True。"""
         audio = Path(t.path)
-        sig = _signature(audio)
+        folder_files = self.folder.find(t.artist, t.title) if self.folder else []
+        sig = _signature(audio, folder_files)
         row = self.db.execute("SELECT signature FROM lyrics_local WHERE track_id=?", (t.id,)).fetchone()
         if row and row["signature"] == sig and not force:
             return False
         ly, _ = resolve_local(audio, t.duration_ms)
+        if ly is None and folder_files:   # 横にもタグにも無いときだけ、歌詞フォルダのものを使う
+            ly = self.folder.load(folder_files, t.title, t.duration_ms)
         self.db.execute(
             "INSERT INTO lyrics_local(track_id,signature,source,synced,has_words,lang,body,updated_at) "
             "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET signature=excluded.signature,"

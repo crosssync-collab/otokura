@@ -17,7 +17,7 @@ from .ttml import parse_ttml
 
 SIDECAR_EXT = (".ttml", ".lrc", ".txt")
 _PRIORITY = {"sidecar:ttml": 0, "sidecar:lrc": 1, "tag:sylt": 2, "tag:lrc": 2, "tag:text": 3,
-             "sidecar:txt": 4, "lrclib": 5, "manual": -1}
+             "sidecar:txt": 4, "folder:ttml": 5, "folder:lrc": 5, "folder:txt": 6, "lrclib": 7, "manual": -1}
 
 
 def find_sidecars(audio: Path) -> dict[str, Path]:

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from otokura.lyrics.api import make_router
 from otokura.lyrics.lrclib import LrcLib
+from otokura.lyrics.folder import LyricsFolder
 from otokura.lyrics.store import LyricsStore, TrackRef
 
 pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg が必要")
@@ -128,3 +129,19 @@ def test_min_interval(tmp_path):
                  base="https://x.test", min_interval_s=0.2)
     t = time.monotonic(); lib.fetch(Query("a", "b")); lib.fetch(Query("a", "b"))
     assert time.monotonic() - t >= 0.6      # 4 回の問い合わせ、間隔 0.2 秒
+
+
+def test_lyrics_folder_only_when_nothing_local(env):
+    c, _, tracks, tmp, _ = env
+    folder = tmp / "lyrics"
+    folder.mkdir()
+    (folder / "潮見 すず - 手紙.txt").write_text("手紙\n\n歌手　潮見 すず\n\nフォルダの歌詞", encoding="utf-8")
+    store = LyricsStore(tmp / "folder.db", folder=LyricsFolder([folder]))
+    app = FastAPI()
+    app.include_router(make_router(store, tracks.get), prefix="/api")
+    c = TestClient(app)
+    r = c.get("/api/tracks/1/lyrics").json()
+    assert r["lyrics"]["source"] == "folder:txt"
+    assert [l["text"] for l in r["lyrics"]["layers"][0]["lines"]] == ["フォルダの歌詞"]
+    (tmp / "a.lrc").write_text("[00:01.00]手元が勝つ", encoding="utf-8")
+    assert c.get("/api/tracks/1/lyrics").json()["lyrics"]["source"] == "sidecar:lrc"

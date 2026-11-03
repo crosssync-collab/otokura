@@ -855,7 +855,7 @@ const refresh=()=>render(true);
 const LYR_API=(typeof window.OTOKURA_API==='string')?window.OTOKURA_API:null;
 const lyrCache=new Map();   // 曲ID → {state:'loading'|'ready'|'error', data, v}
 const lyrMock=new Map();
-const LYR_SRC={'sidecar:ttml':'TTML ファイル','sidecar:lrc':'LRC ファイル','sidecar:txt':'テキストファイル','tag:sylt':'タグ(SYLT)','tag:lrc':'タグ','tag:text':'タグ','lrclib':'LRCLIB','manual':'手動登録'};
+const LYR_SRC={'sidecar:ttml':'TTML ファイル','sidecar:lrc':'LRC ファイル','sidecar:txt':'テキストファイル','tag:sylt':'タグ(SYLT)','tag:lrc':'タグ','tag:text':'タグ','folder:ttml':'歌詞フォルダ(TTML)','folder:lrc':'歌詞フォルダ(LRC)','folder:txt':'歌詞フォルダ','lrclib':'LRCLIB','manual':'手動登録'};
 const reduceMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
 function setLyr(id,o){const p=lyrCache.get(id);o.v=((p&&p.v)||0)+1;if(p&&p.autoTried)o.autoTried=true;lyrCache.set(id,o);return o;}
 
