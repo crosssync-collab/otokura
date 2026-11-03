@@ -99,7 +99,9 @@ def _entries(f, kind: str) -> list[dict]:
     elif kind == "mp4":
         from mutagen.mp4 import MP4FreeForm
         for k, v in tags.items():
-            if k in ("trkn", "disk"):
+            if not isinstance(v, list):                 # cpil・pgap などの真偽値や数値
+                out.append({"key": k, "values": [str(v)], "editable": False})
+            elif k in ("trkn", "disk"):
                 out.append({"key": k, "values": [f"{n}/{t}" if t else str(n) for n, t in v], "editable": True})
             elif k == "covr":
                 out.append({"key": k, "values": [f"画像 {len(v)} 枚"], "editable": False})

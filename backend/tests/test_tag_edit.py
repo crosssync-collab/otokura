@@ -126,3 +126,12 @@ def test_readonly_file_is_refused(client, cfg):
             assert c.put(f"/api/tracks/{t['id']}/meta", json={"fields": {"title": "x"}}).status_code == 409
     finally:
         p.chmod(0o644)
+
+
+def test_mp4_with_boolean_atoms(tmp_path):
+    from mutagen.mp4 import MP4
+    p = make_audio(tmp_path / "a.m4a", codec_args=("-c:a", "aac"))
+    f = MP4(p); f.add_tags() if f.tags is None else None; f.tags["cpil"] = True; f.tags["tmpo"] = [120]; f.save()
+    tagedit.write(p, {"title": "曲"}, cover=png_bytes())
+    e = {x["key"]: x for x in tagedit.read(p)["tags"]}
+    assert e["cpil"]["values"] == ["True"] and not e["cpil"]["editable"] and tagedit.read(p)["fields"]["title"] == "曲"
