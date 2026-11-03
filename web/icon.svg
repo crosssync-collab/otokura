@@ -1,17 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#5a3fb0"/>
-      <stop offset="1" stop-color="#2c1d63"/>
-    </linearGradient>
-  </defs>
-  <!-- 全面を塗る(Android のマスク・iOS の角丸は OS 側で切る)。絵は中央 60% に収める -->
-  <rect width="512" height="512" fill="url(#bg)"/>
-  <!-- 蔵の屋根 -->
-  <path d="M136 214 L256 140 L376 214" fill="none" stroke="#f3eeff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- レコード -->
-  <circle cx="256" cy="290" r="96" fill="#f3eeff"/>
-  <circle cx="256" cy="290" r="66" fill="none" stroke="#5a3fb0" stroke-width="5" opacity=".45"/>
-  <circle cx="256" cy="290" r="30" fill="#c9b8ff"/>
-  <circle cx="256" cy="290" r="8" fill="#2c1d63"/>
+  <!-- 全面を塗る(Android のマスク・iOS の角丸は OS 側で切る)。絵は中央の円(半径 205)に収める -->
+  <rect width="512" height="512" fill="#ffffff"/>
+  <g fill="none" stroke="#1d8fd6" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 瓦屋根と鬼瓦 -->
+    <path d="M96 214 L256 126 L416 214 L396 228 L256 152 L116 228 Z" fill="#c7e8fc"/>
+    <rect x="238" y="106" width="36" height="22" rx="8" fill="#c7e8fc"/>
+    <path d="M150 182 l10 16 M184 164 l10 16 M218 145 l10 16 M294 145 l-10 16 M328 164 l-10 16 M362 182 l-10 16" stroke-width="7"/>
+    <!-- 柱と土台 -->
+    <path d="M150 222 V408 M362 222 V408 M118 410 H394"/>
+    <!-- スピーカー 2 つ -->
+    <circle cx="256" cy="224" r="29"/>
+    <circle cx="256" cy="224" r="14" fill="#c7e8fc"/>
+    <circle cx="256" cy="288" r="29"/>
+    <circle cx="256" cy="288" r="14" fill="#c7e8fc"/>
+    <!-- 音の波 -->
+    <path d="M212 208 q-10 16 0 32 M197 202 q-15 22 0 44 M300 272 q10 16 0 32 M315 266 q15 22 0 44" stroke-width="8"/>
+    <!-- 鴨居と観音開きの扉 -->
+    <path d="M194 330 H318"/>
+    <rect x="208" y="342" width="96" height="66" rx="3"/>
+    <path d="M256 342 V408 M244 366 v16 M268 366 v16" stroke-width="8"/>
+    <!-- 左右の手すり -->
+    <path d="M150 360 H200 M150 384 H200 M312 360 H362 M312 384 H362 M175 360 V408 M337 360 V408" stroke-width="8"/>
+  </g>
+  <g fill="#1d8fd6">
+    <circle cx="256" cy="224" r="5"/>
+    <circle cx="256" cy="288" r="5"/>
+  </g>
 </svg>

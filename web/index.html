@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>音蔵</title>
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#462c96">
+<meta name="theme-color" content="#1d8fd6">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="mobile-web-app-capable" content="yes">
@@ -16,12 +16,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --h:255; --cr:16px;
+  --h:202; --ps:85%; --pl:40%; --cr:16px;   /* 既定はペリカンのバイブラントブルー。カバーの色に合わせるときは JS で上書き */
   --display:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Yu Gothic",system-ui,sans-serif;
   --body:"Noto Sans JP","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
   --bg:hsl(var(--h) 30% 97%); --s1:hsl(var(--h) 28% 94%); --s2:hsl(var(--h) 26% 91%); --s3:hsl(var(--h) 24% 87%);
   --text:hsl(var(--h) 25% 12%); --muted:hsl(var(--h) 10% 40%); --line:hsl(var(--h) 18% 80%);
-  --pri:hsl(var(--h) 55% 38%); --on-pri:#fff; --pc:hsl(var(--h) 70% 88%); --on-pc:hsl(var(--h) 60% 18%);
+  --pri:hsl(var(--h) var(--ps) var(--pl)); --on-pri:#fff; --pc:hsl(var(--h) 70% 88%); --on-pc:hsl(var(--h) 60% 18%);
   --ok:#2E7D4F; --err:#B3261E; --star:#C98A00;
   box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
 }
@@ -580,9 +580,9 @@ function pageHome(){
   if(!st.rand)st.rand=shuffle(albums).slice(0,8).map(a=>a.id);
   const rand=st.rand.map(i=>AL[i]).filter(visAl);
   const quick=shuffle(vs.filter(s=>s.fav)).slice(0,8);
-  const s=cur(),al=s?alOf(s):{h:255};
+  const s=cur(),al=s?alOf(s):{h:202};
   const mixCard=(act,attrs,id,h,t,sub)=>`<button class="card" data-act="${act}" ${attrs}><div class="cover" style="background:${cvBg(id,h)}"></div><b>${t}</b><small>${sub}</small></button>`;
-  const mixes=mixCard('mixPersonal','',2,255,'パーソナルミックス','よく聴くジャンルとアーティスト')
+  const mixes=mixCard('mixPersonal','',2,202,'パーソナルミックス','よく聴くジャンルとアーティスト')
     +mixCard('mixTrack','',0,al.h,'曲ミックス','ライブラリ全体から曲を選びます')
     +mixCard('mixAlbum','',1,(al.h+40)%360,'アルバムミックス','アルバムをまるごと並べます')
     +DECADES.map((d,i)=>mixCard('mixDecade',`data-d="${d}"`,i,[200,35,310,140][i%4],`${d}年代ミックス`,`${vs.filter(x=>decadeOf(alOf(x))===d).length} 曲`)).join('');
@@ -1115,7 +1115,9 @@ function parseTTMLjs(text,source,trackMs){
 }
 
 /* ================= player ================= */
-function setHue(){document.documentElement.style.setProperty('--h',st.set.dyn&&cur()?alOf(cur()).h:255);}
+function setHue(){const r=document.documentElement.style,dyn=st.set.dyn&&cur();
+  if(dyn){r.setProperty('--h',alOf(cur()).h);r.setProperty('--ps','55%');r.setProperty('--pl','38%');}
+  else['--h','--ps','--pl'].forEach(k=>r.removeProperty(k));}
 function applyTheme(){
   const r=document.documentElement;
   if(st.set.theme==='system')r.removeAttribute('data-theme');else r.setAttribute('data-theme',st.set.theme);
