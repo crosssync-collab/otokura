@@ -113,7 +113,7 @@ class LyricsStore:
             return False
         ly, _ = resolve_local(audio, t.duration_ms)
         if ly is None and folder_files:   # 横にもタグにも無いときだけ、歌詞フォルダのものを使う
-            ly = self.folder.load(folder_files, t.title, t.duration_ms)
+            ly = self.folder.load(folder_files, t.title, t.duration_ms, t.artist)
         self.db.execute(
             "INSERT INTO lyrics_local(track_id,signature,source,synced,has_words,lang,body,updated_at) "
             "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(track_id) DO UPDATE SET signature=excluded.signature,"

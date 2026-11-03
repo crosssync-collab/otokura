@@ -18,7 +18,9 @@ from .resolver import SIDECAR_EXT, best, parse_file
 CHECK_EVERY_S = 60
 _BRACKETS = re.compile(r"\s*[\(\[（【［][^\)\]）】］]*[\)\]）】］]")
 _FEAT = re.compile(r"\s*(?:feat\.?|ft\.|featuring|with|&|×|/|,|、)\s.*$|\s*[\(（](?:feat|ft)\.?.*$", re.I)
-_CREDIT = re.compile(r"^(?:歌手|歌|唄|アーティスト|作詞|作曲|編曲|vocal|lyrics?|music|words?)\s*[:：\s　]", re.I)
+_CREDIT = re.compile(r"^(?:歌手|歌|唄|演唱|アーティスト|作詞|作词|作曲|編曲|编曲|词|曲|vocal|lyrics?|music|words?|written|"
+                     r"composed|arranged|album|title|artist|singer|by)\s*[:：\s　]", re.I)
+HEADER_MAX = 8      # 先頭の何行までを曲名・歌手・作詞などの見出しとして落とすか
 
 
 def norm(s: str | None) -> str:
@@ -86,31 +88,28 @@ class LyricsFolder:
                     found[p] = None
         return sorted(found)
 
-    def load(self, paths: list[Path], title: str | None, track_ms: int | None = None) -> Lyrics | None:
+    def load(self, paths: list[Path], title: str | None, track_ms: int | None = None,
+             artist: str | None = None) -> Lyrics | None:
         cands = []
         for p in paths:
             ly = parse_file(p, track_ms)
             if ly is None:
                 continue
             ly.source = "folder:" + ly.source.split(":", 1)[-1]
-            if not ly.synced:
-                _strip_header(ly, title)
+            _strip_header(ly, title, artist)
             cands.append(ly)
         return best(cands)
 
 
-def _strip_header(ly: Lyrics, title: str | None) -> None:
-    """テキストの先頭にある「曲名」「歌手 ○○」「作詞 ○○」などの行を落とす。"""
+def _strip_header(ly: Lyrics, title: str | None, artist: str | None = None) -> None:
+    """先頭にある「曲名」「歌手名」「作詞 ○○」「Album: ○○」などの行を落とす(同期ありの .lrc にもある)。"""
     lines = ly.main.lines if ly.main else []
+    names = {norm(title), norm(_BRACKETS.sub("", title or "")), norm(artist)} - {""}
 
-    def next_text(i: int) -> int:
-        while i < len(lines) and not lines[i].text:
-            i += 1
-        return i
+    def is_header(text: str) -> bool:
+        return not text or norm(text) in names or norm(_BRACKETS.sub("", text)) in names or bool(_CREDIT.match(text))
 
-    i = next_text(0)
-    if i < len(lines) and title and norm(lines[i].text) in {norm(title), norm(_BRACKETS.sub("", title))}:
-        i = next_text(i + 1)
-    while i < len(lines) and _CREDIT.match(lines[i].text):
-        i = next_text(i + 1)
+    i = 0
+    while i < min(len(lines), HEADER_MAX) and is_header(lines[i].text):
+        i += 1
     del lines[:i]

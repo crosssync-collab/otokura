@@ -33,6 +33,16 @@ def test_load_strips_header_and_prefers_lrc(tmp_path):
     assert ly.source == "folder:lrc" and ly.synced and ly.main.lines[0].start == 12000
 
 
+def test_load_strips_header_in_lrc(tmp_path):
+    write(tmp_path / "Mr.Children - ためいきの日曜日.lrc",
+          "[00:00.00]ためいきの日曜日 (嘆息的星期日)\n[00:02.00]Mr.Children\n[00:04.00]作詞：桜井和寿\n"
+          "[00:06.00]Album:Best\n[00:20.00]最初の歌詞\n[00:25.00]作曲の話をする歌詞\n")
+    f = LyricsFolder([tmp_path])
+    ly = f.load(f.find("Mr.Children", "ためいきの日曜日"), "ためいきの日曜日", 200000, "Mr.Children")
+    assert [l.text for l in ly.main.lines] == ["最初の歌詞", "作曲の話をする歌詞"]
+    assert ly.main.lines[0].start == 20000
+
+
 def test_index_follows_new_files(tmp_path):
     f = LyricsFolder([tmp_path])
     assert f.find("A", "B") == []
