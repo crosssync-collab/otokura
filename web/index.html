@@ -1179,7 +1179,8 @@ function enhanceShelves(root){
     let nav=hh.querySelector('.shnav');
     if(!nav){nav=document.createElement('span');nav.className='shnav';
       nav.innerHTML=`<button data-act="shelfGo" data-d="-1" aria-label="左へ" style="transform:scaleX(-1)">${ico('chev',20)}</button><button data-act="shelfGo" data-d="1" aria-label="右へ">${ico('chev',20)}</button>`;
-      hh.appendChild(nav);sh.addEventListener('scroll',()=>shelfState(sh,nav),{passive:true});}
+      hh.appendChild(nav);sh.addEventListener('scroll',()=>shelfState(sh,nav),{passive:true});
+      if(window.ResizeObserver)new ResizeObserver(()=>shelfState(sh,nav)).observe(sh);}   // 幅が後から変わっても測り直す
     shelfState(sh,nav);
   });
 }
@@ -1694,7 +1695,7 @@ document.addEventListener('keydown',e=>{
 document.addEventListener('input',e=>{
   const t=e.target;
   if(t.id==='qf'){st.lib.q=t.value;const r=route();const body=pageLibrary(r.b);const tmp=document.createElement('div');tmp.innerHTML=body;$('#libbody').innerHTML=tmp.querySelector('#libbody').innerHTML;markPlaying();markSel();}
-  if(t.id==='sq'){st.searchQ=t.value;$('#sres').innerHTML=searchBody();markPlaying();}
+  if(t.id==='sq'){st.searchQ=t.value;$('#sres').innerHTML=searchBody();markPlaying();enhanceShelves($('#sres'));}
   if(t.id==='castvol'&&castOn()){castP.volumeLevel=+t.value/100;castC.setVolumeLevel();t.nextElementSibling.textContent=t.value;}
   if(t.dataset&&props){if(t.dataset.f)props.df[t.dataset.f]=t.value;if(t.dataset.tk)props.dt[t.dataset.tk]=t.value;if(t.dataset.nk!=null)props.nk[t.dataset.nk]=t.value;}
   if(t.dataset&&t.dataset.rng){st.set[t.dataset.rng]=+t.value;t.nextElementSibling.textContent=t.value+t.dataset.u;saveSettings();}
