@@ -115,10 +115,22 @@ button.chip[aria-pressed="true"],button.chip[aria-selected="true"]{background:va
 .hh{display:flex;align-items:center;gap:4px;margin-bottom:8px}
 .hh h2{font-size:19px;flex:1}
 .hh a,.hh button{color:var(--muted);display:flex;align-items:center;font-size:13px}
-.shelf{display:flex;gap:14px;overflow-x:auto;padding-bottom:6px;scroll-snap-type:x proximity;scrollbar-width:none;margin:0 -16px;padding-left:16px;padding-right:16px}
+.shelf{display:flex;gap:14px;overflow-x:auto;padding-bottom:6px;scroll-snap-type:x proximity;scrollbar-width:none;margin:0 -16px;padding-left:16px;padding-right:16px;scroll-padding-inline:16px}
 .shelf::-webkit-scrollbar{display:none}
 .shelf .card{width:144px;flex:none;scroll-snap-align:start}
-@media (min-width:900px){.shelf{margin:0 -32px;padding-left:32px;padding-right:32px}.shelf .card{width:164px}}
+@media (min-width:900px){.shelf{margin:0 -32px;padding-left:32px;padding-right:32px;scroll-padding-inline:32px}.shelf .card{width:164px}}
+/* 入りきらない棚: 続きがある側の端をぼかし、見出しに ‹ › を出す */
+.shelf.more-r{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 56px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 56px),transparent)}
+.shelf.more-l{-webkit-mask-image:linear-gradient(90deg,transparent,#000 56px);mask-image:linear-gradient(90deg,transparent,#000 56px)}
+.shelf.more-l.more-r{-webkit-mask-image:linear-gradient(90deg,transparent,#000 56px,#000 calc(100% - 56px),transparent);mask-image:linear-gradient(90deg,transparent,#000 56px,#000 calc(100% - 56px),transparent)}
+.shnav{display:flex;gap:2px;margin-left:4px}
+.shnav button{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:var(--s2);color:var(--text)}
+.shnav button:disabled{opacity:.35;cursor:default}
+/* 入りきらない文字: 止まってから横に流して全体を見せ、また戻る */
+.mq{text-overflow:clip!important}
+.mq>.mq-in{display:inline-block;animation:mq var(--mq-t,8s) linear infinite alternate}
+@keyframes mq{0%,18%{transform:translateX(0)}82%,100%{transform:translateX(var(--mq-d,0))}}
+@media (prefers-reduced-motion:reduce){.mq>.mq-in{animation:none}}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:18px 14px}
 .card{display:block;text-align:left;position:relative;min-width:0}
 .card .cover{width:100%;margin-bottom:8px}
@@ -1160,6 +1172,36 @@ function applyTheme(){
 }
 const WN=96;
 const waveBars=seed=>{let h='';for(let i=0;i<WN;i++){const v=Math.abs(Math.sin(i*.37+seed)*Math.cos(i*.11+seed*2))*.75+Math.abs(Math.sin(i*1.7+seed))*.25;h+=`<i style="height:${Math.round(14+v*86)}%"></i>`;}return h;};
+// 棚(横に並ぶカード)が入りきらないとき、見出しに ‹ › を出し、続きがある側をぼかす
+function enhanceShelves(root){
+  root.querySelectorAll('.shelf').forEach(sh=>{
+    const hh=sh.closest('.hrow')&&sh.closest('.hrow').querySelector('.hh');if(!hh)return;
+    let nav=hh.querySelector('.shnav');
+    if(!nav){nav=document.createElement('span');nav.className='shnav';
+      nav.innerHTML=`<button data-act="shelfGo" data-d="-1" aria-label="左へ" style="transform:scaleX(-1)">${ico('chev',20)}</button><button data-act="shelfGo" data-d="1" aria-label="右へ">${ico('chev',20)}</button>`;
+      hh.appendChild(nav);sh.addEventListener('scroll',()=>shelfState(sh,nav),{passive:true});}
+    shelfState(sh,nav);
+  });
+}
+function shelfState(sh,nav){
+  const over=sh.scrollWidth-sh.clientWidth>8,l=sh.scrollLeft>8,r=sh.scrollLeft<sh.scrollWidth-sh.clientWidth-8;
+  nav.hidden=!over;nav.children[0].disabled=!l;nav.children[1].disabled=!r;
+  sh.classList.toggle('more-l',over&&l);sh.classList.toggle('more-r',over&&r);
+}
+// 入りきらない曲名などを、時間で横に流して全体を見せる(再生中の画面とミニプレーヤー)
+const MQ_SEL='.mini .tt b,.mini .tt small,.xinfo h2,.xinfo .sub,.xtop .ctx b';
+function applyMarquee(root){
+  if(!root)return;
+  root.querySelectorAll(MQ_SEL).forEach(el=>{
+    if(el.querySelector('.mq-in'))return;
+    const over=el.scrollWidth-el.clientWidth;if(over<=2)return;
+    el.classList.add('mq');el.innerHTML=`<span class="mq-in">${el.innerHTML}</span>`;
+    el.style.setProperty('--mq-d',-over+'px');el.style.setProperty('--mq-t',Math.max(5,over/35/.64).toFixed(1)+'s');
+  });
+}
+{let t=null;addEventListener('resize',()=>{clearTimeout(t);t=setTimeout(()=>{renderMini();renderXP();enhanceShelves($('#page'));},250);});}
+new MutationObserver(()=>{cancelAnimationFrame(enhanceShelves._f);enhanceShelves._f=requestAnimationFrame(()=>enhanceShelves($('#page')));})
+  .observe(document.getElementById('page'),{childList:true});
 function renderMini(){
   if(!cur()){$('#mini').hidden=true;return;}$('#mini').hidden=false;
   const s=cur(),al=alOf(s),o=OUTS.find(x=>x[0]===st.out);
@@ -1167,7 +1209,7 @@ function renderMini(){
     ${st.out!=='browser'?`<span class="chip pri castchip">${ico('cast',14)}${esc(o[1])}</span>`:''}
     <button class="ib sm ${s.fav?'fav-on':''}" data-act="fav" data-id="${s.id}" aria-label="お気に入り">${ico(s.fav?'heart':'heart0',22)}</button>
     <button class="pbtn" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',26)}</button></div><div class="pb"><i id="mpb"></i></div>`;
-  updateProg();
+  applyMarquee($('#mini'));updateProg();
 }
 function renderXP(){
   if(!cur()){$('#xp').classList.remove('open');return;}
@@ -1194,6 +1236,7 @@ function renderXP(){
       <button data-act="mixInstant" data-id="${s.id}">${ico('mix')}<span>ミックス</span></button>
       <button data-act="outSheet">${ico('cast')}<span>再生先</span></button></div></div>`;
   if(st.lyr)mountLyrics();
+  applyMarquee(x);
   lyrPrevKey=null;
   updateProg();
 }
@@ -1537,6 +1580,7 @@ const ACT={
   lyrMenu:()=>lyrMenuSheet(),
   lyrPaste:()=>lyrPasteSheet(),
   lyrPasteSave:()=>{const t=$('#lyrtext').value;if(!t.trim()){toast('歌詞を入力してください');return;}closeSheet();lyrSave(cur().id,'PUT','',{text:t},'歌詞を保存しました');},
+  shelfGo:(d,el)=>{const sh=el.closest('.hrow').querySelector('.shelf');sh.scrollBy({left:sh.clientWidth*.8*(+d.d),behavior:reduceMotion()?'auto':'smooth'});},
   propsSong:d=>openProps('song',+d.id),
   propsAlbum:d=>openProps('album',+d.id),
   propsTab:d=>{props.tab=d.t;renderProps();},
