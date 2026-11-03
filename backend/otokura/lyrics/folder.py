@@ -19,7 +19,7 @@ CHECK_EVERY_S = 60
 _BRACKETS = re.compile(r"\s*[\(\[（【［][^\)\]）】］]*[\)\]）】］]")
 _FEAT = re.compile(r"\s*(?:feat\.?|ft\.|featuring|with|&|×|/|,|、)\s.*$|\s*[\(（](?:feat|ft)\.?.*$", re.I)
 _CREDIT = re.compile(r"^(?:歌手|歌|唄|演唱|アーティスト|作詞|作词|作曲|編曲|编曲|词|曲|vocal|lyrics?|music|words?|written|"
-                     r"composed|arranged|album|title|artist|singer|by)\s*[:：\s　]", re.I)
+                     r"composed|arranged|album|title|artist|singer|sing|by)\s*[:：\s　]", re.I)
 HEADER_MAX = 8      # 先頭の何行までを曲名・歌手・作詞などの見出しとして落とすか
 
 
