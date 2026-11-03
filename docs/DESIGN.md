@@ -6,11 +6,11 @@
 ブラウザ(web/index.html) ──HTTP──▶ FastAPI(otokura.app) ──▶ SQLite(/data/otokura.db)
         ▲  <audio> で直接再生           │                      ▲
         └──── /api/tracks/{id}/stream ◀─┤ スキャナ(otokura.scanner)┘
-                                        └─ /music/* (読み取り専用マウント)
+                                        └─ /music/* (読み書きできるマウント)
 ```
 
 - 1 コンテナ、1 プロセス(uvicorn)。スキャンはバックグラウンドのスレッド。
-- 音楽フォルダは読み取り専用でマウントする。音蔵は音楽ファイルに一切書き込まない。
+- 音楽ファイルに書き込むのは、利用者がプロパティでタグ・カバーを編集したときだけ(tagedit.py / tag_api.py)。書く前の値を tag_edits と data/tag-history に残し、元に戻せる。スキャン・再生・歌詞では書き込まない。
 - 状態はすべて `/data` に置く(DB、カバーの縮小画像)。コンテナを作り直しても消えない。
 
 ## ソース

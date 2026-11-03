@@ -21,6 +21,7 @@ from .lyrics.api import make_router as lyrics_router
 from .lyrics.folder import LyricsFolder
 from .lyrics.lrclib import LrcLib
 from .lyrics.store import LyricsStore, TrackRef
+from .tag_api import make_router as tag_router
 from .scanner import Scanner, Scheduler
 
 log = logging.getLogger("otokura")
@@ -73,6 +74,8 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         r = track_row(tid)
         return r["source"], r["rel"]
 
+    app.include_router(tag_router(db, cfg, scanner, src_by_id, track_row, track_path), prefix="/api")
+
     def ensure_stat(source: str, rel: str):
         db.conn.execute("INSERT OR IGNORE INTO track_stats(source,rel) VALUES(?,?)", (source, rel))
 
@@ -81,7 +84,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     def library(request: Request):
         """画面が起動時に読む一覧。配列は先頭の columns の順。"""
         ver = db.meta("library_version") or "0"
-        albums = db.q("SELECT id,title,artist,year,genre,source,folder,art IS NOT NULL AS has_art,hue,added_at "
+        albums = db.q("SELECT id,title,artist,year,genre,source,folder,art IS NOT NULL AS has_art,hue,added_at,art "
                       "FROM albums ORDER BY id")
         tracks = db.q(
             "SELECT t.id,t.album_id,t.disc_no,t.track_no,t.title,t.artist,t.duration_ms,t.codec,t.sample_rate,"
@@ -94,7 +97,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "now": time.time(),
             "sources": [{"id": s.id, "name": s.name, "path": str(s.path)} for s in cfg.sources],
             "playable": sorted(metadata.BROWSER_PLAYABLE),
-            "albumColumns": ["id", "title", "artist", "year", "genre", "source", "folder", "hasArt", "hue", "addedAt"],
+            "albumColumns": ["id", "title", "artist", "year", "genre", "source", "folder", "hasArt", "hue", "addedAt", "art"],
             "albums": [list(r) for r in albums],
             "trackColumns": ["id", "albumId", "disc", "no", "title", "artist", "durationMs", "codec", "sampleRate",
                              "bitDepth", "kbps", "rel", "source", "plays", "lastPlayed", "skips", "fav", "rating",

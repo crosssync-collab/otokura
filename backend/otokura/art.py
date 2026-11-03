@@ -51,7 +51,8 @@ def make_thumbs(data: bytes, art_dir: Path, key: str) -> tuple[str, int | None] 
         img = ImageOps.exif_transpose(img).convert("RGB")
     except Exception:
         return None
-    name = hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
+    # 画像の中身も名前に入れる(カバーを差し替えたら名前が変わり、ブラウザの古いキャッシュを使わない)
+    name = hashlib.sha1(key.encode("utf-8") + hashlib.sha1(data).digest()).hexdigest()[:20]
     art_dir.mkdir(parents=True, exist_ok=True)
     for size in SIZES:
         t = img.copy()

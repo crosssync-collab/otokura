@@ -16,9 +16,9 @@ services:
       OTOKURA_LRCLIB: "1"          # 歌詞が無い曲だけ LRCLIB から探す。0 で無効
       OTOKURA_LYRICS: "/music/lyrics"  # 横にもタグにも歌詞が無い曲は、ここの「アーティスト - 曲名.lrc/.txt」を探す
     volumes:
-      # 音楽フォルダは読み取り専用(音蔵は音楽ファイルに書き込まない)
-      - "${MUSIC_LOSSLESS}:/music/Lossless:ro"
-      - "${MUSIC_LOSSY}:/music/1.Lossy:ro"
+      # 音楽フォルダ。タグの編集(プロパティ)で音楽ファイルに書き込むので読み書きできるようにつなぐ
+      - "${MUSIC_LOSSLESS}:/music/Lossless"
+      - "${MUSIC_LOSSY}:/music/1.Lossy"
       - "${MUSIC_LYRICS:-./lyrics}:/music/lyrics:ro"
       # データベースとカバーの縮小画像
       - "${OTOKURA_DATA_DIR:-./data}:/data"

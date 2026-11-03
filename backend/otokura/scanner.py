@@ -1,4 +1,4 @@
-"""ライブラリのスキャン(差分)。音楽ファイルには書き込まない。"""
+"""ライブラリのスキャン(差分)。音楽ファイルには書き込まない(書き込みはタグ編集の tagedit.py だけ)。"""
 from __future__ import annotations
 
 import logging
@@ -79,6 +79,44 @@ class Scanner:
         with self._lock:
             self._scan(full)
         return self.state
+
+    def update_files(self, items: list[tuple[Source, str]], new_art: bool = False, wait_s: float = 10) -> bool:
+        """タグを書き換えたファイルだけ読み直す。スキャン中で待っても空かなければ False。
+        new_art: カバーを差し替えたので、アルバムの縮小画像を作り直す。"""
+        if not self._lock.acquire(timeout=wait_s):
+            return False
+        try:
+            self._pending = []
+            c = self.db.conn
+            touched: set[int] = set()
+            for src, rels in items:
+                p = src.path / rels
+                old = self.db.one("SELECT id,source,rel,mtime,size,album_id FROM tracks WHERE source=? AND rel=?",
+                                  (src.id, rels))
+                info = metadata.read(p, Path(rels))
+                if info is None:
+                    continue
+                with self.db.write_lock:
+                    if new_art and old and old["album_id"]:
+                        c.execute("UPDATE albums SET art=NULL, art_src=NULL WHERE id=?", (old["album_id"],))
+                    aid = self._album(src, info, Path(rels), p)
+                    if new_art:     # アルバム名が変わらず既に画像があっても、この曲の画像で作り直す
+                        c.execute("UPDATE albums SET art=NULL WHERE id=?", (aid,))
+                        self._art(aid, album_key(src.id, info, Path(rels)), info, p)
+                    tid = self._upsert_track(src, rels, p.stat(), info, aid, old)
+                touched.add(aid)
+                if old and old["album_id"]:
+                    touched.add(old["album_id"])
+                self._lyrics(tid, src, rels, info)
+            with self.db.write_lock:
+                self._finish_albums(touched)
+                c.commit()
+            self._flush(c)
+            if self.on_done:
+                self.on_done()
+            return True
+        finally:
+            self._lock.release()
 
     def _run(self, full: bool):
         try:

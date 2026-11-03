@@ -366,6 +366,21 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .sheet .sh{display:flex;align-items:center;padding:0 8px 6px;gap:8px}
 .sheet .sh h2{font-size:18px;flex:1}
 .sheet .body{overflow:auto;min-height:0}
+/* プロパティ(タグの表示・編集) */
+.props .seg{padding:0 8px 8px}
+.props .form textarea,.props .tg textarea{background:var(--s2);border:1px solid transparent;border-radius:12px;padding:8px 10px;color:var(--text);font:inherit;width:100%;resize:vertical;min-height:40px}
+.props .form input:focus,.props textarea:focus{outline:none;border-color:var(--pri)}
+.props .tg{display:grid;grid-template-columns:minmax(90px,30%) minmax(0,1fr);gap:6px 10px;padding:12px 16px;align-items:start}
+.props .tg code{font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;padding-top:10px;overflow-wrap:anywhere;color:var(--muted)}
+.props .tg .ro{padding:8px 0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.props .tg input{background:var(--s2);border:1px solid transparent;border-radius:12px;padding:8px 10px;color:var(--text);font:12px ui-monospace,Menlo,Consolas,monospace}
+.props .note{margin:0 16px 8px;font-size:13px;color:var(--muted)}
+.props .warn{margin:0 16px 8px;padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--err) 14%,transparent);color:var(--text);font-size:13px}
+.props .cov{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;padding:12px 16px}
+.props .cov img,.props .cov .none{width:min(240px,60vw);aspect-ratio:1;object-fit:cover;border-radius:16px;background:var(--s2);display:grid;place-items:center;color:var(--muted)}
+.props .acts{display:flex;flex-direction:column;gap:8px}
+.props .hist{margin:4px 8px 8px}
+
 .mi{display:flex;align-items:center;gap:16px;padding:12px 14px;border-radius:14px;width:100%;text-align:left}
 .mi:hover{background:var(--s2)}
 .mi svg{color:var(--muted)}
@@ -403,6 +418,8 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 <script>
 /* ================= icons ================= */
 const P={
+info:"M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z",
+edit:"M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
 rot:"M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.29 0 12 0l-.66.03 3.81 3.81 1.33-1.32zm-6.25-.77c-.59-.59-1.54-.59-2.12 0L1.75 8.11c-.59.59-.59 1.54 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36zm-7.31.29C4.25 19.94 1.91 16.76 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32z",
 land:"M1.01 7L1 17c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H3c-1.1 0-1.99.9-1.99 2zM19 7v10H5V7h14z",
 port:"M17 1.01L7 1c-1.1 0-1.99.9-1.99 2v18c0 1.1.89 2 1.99 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z",
@@ -555,7 +572,7 @@ const cvBg=(i,h)=>{
   if(v===1)return `repeating-linear-gradient(115deg,hsl(${h} 70% 70% / .35) 0 10px,transparent 10px 22px),linear-gradient(160deg,hsl(${(h+30)%360} 60% 48%),hsl(${h} 55% 20%))`;
   return `conic-gradient(from 200deg at 70% 70%,hsl(${h} 80% 70%),hsl(${(h+60)%360} 70% 40%),hsl(${h} 60% 25%),hsl(${h} 80% 70%))`;
 };
-const artBg=(al,size=300)=>al.art?`url('${API}/api/art/${al.dbid}?size=${size}') center/cover no-repeat,${cvBg(al.id,al.h)}`:cvBg(al.id,al.h);
+const artBg=(al,size=300)=>al.art?`url('${API}/api/art/${al.dbid}?size=${size}&v=${al.artv||''}') center/cover no-repeat,${cvBg(al.id,al.h)}`:cvBg(al.id,al.h);
 const cover=(al,cls='')=>`<div class="cover ${cls}" style="background:${artBg(al)}"><span class="eq">${ico('vol',22)}</span></div>`;
 const songsOfAl=id=>SONGS.filter(s=>s.al===id);
 const albumsOf=name=>AL.filter(a=>a.a===name&&visAl(a));
@@ -1309,11 +1326,122 @@ function menuSheet(k,id){
     openSheet('menu',esc(s.t),
       mi('playNextId','play','次に再生',`data-id="${s.id}"`)+mi('queueId','list','キューの最後に追加',`data-id="${s.id}"`)
       +mi('plPick','add','プレイリストに追加',`data-id="${s.id}"`)+mi('fav',s.fav?'heart':'heart0',s.fav?'お気に入りから外す':'お気に入りに追加',`data-id="${s.id}" data-close="1"`)
-      +mi('mixInstant','mix','この曲に近い曲でミックス',`data-id="${s.id}"`)+mi('goAlbum','album','アルバムを開く',`data-id="${al.id}"`)+mi('goArtist','people','アーティストを開く',`data-n="${esc(al.a)}"`));
+      +mi('mixInstant','mix','この曲に近い曲でミックス',`data-id="${s.id}"`)+mi('goAlbum','album','アルバムを開く',`data-id="${al.id}"`)+mi('goArtist','people','アーティストを開く',`data-n="${esc(al.a)}"`)
+      +(LIVE?mi('propsSong','info','プロパティ(タグの表示・編集)',`data-id="${s.id}"`):''));
   }else{
     const al=AL[+id],c=cx(songsOfAl(al.id).map(s=>s.id));
-    openSheet('menu',esc(al.t),mi('playIds','play','再生',`data-cx="${c}"`)+mi('playNextIds','play','次に再生',`data-cx="${c}"`)+mi('queueIds','list','キューの最後に追加',`data-cx="${c}"`)+mi('mixIds','mix','ミックス',`data-cx="${c}" data-t="${esc(al.t)} のミックス"`)+mi('goArtist','people','アーティストを開く',`data-n="${esc(al.a)}"`));
+    openSheet('menu',esc(al.t),mi('playIds','play','再生',`data-cx="${c}"`)+mi('playNextIds','play','次に再生',`data-cx="${c}"`)+mi('queueIds','list','キューの最後に追加',`data-cx="${c}"`)+mi('mixIds','mix','ミックス',`data-cx="${c}" data-t="${esc(al.t)} のミックス"`)+mi('goArtist','people','アーティストを開く',`data-n="${esc(al.a)}"`)
+      +(LIVE?mi('propsAlbum','edit','アルバムのタグ・カバーを編集',`data-id="${al.id}"`):''));
   }
+}
+// ---------- プロパティ(タグの表示・編集)。音楽ファイルに書き、前の値はサーバーに残るので元に戻せる ----------
+const FIELD_LABEL={title:'曲名',artist:'アーティスト',album:'アルバム',albumartist:'アルバムアーティスト',date:'年(日付)',genre:'ジャンル',
+  tracknumber:'曲番号(3 や 3/12)',discnumber:'ディスク番号',composer:'作曲者',comment:'コメント'};
+let props=null;
+async function openProps(k,id){
+  const s=k==='song'?SONGS[id]:null,al=k==='album'?AL[id]:null;
+  props={k,s,al,tab:'tags',meta:null,df:{},dt:{},nk:[],busy:false};
+  openSheet('props',esc(k==='song'?s.t:al.t),`<div class="empty">読み込んでいます…</div>`);
+  try{props.meta=await api(k==='song'?`/api/tracks/${s.dbid}/meta`:`/api/albums/${al.dbid}/meta`);}
+  catch(e){toast('プロパティを読めませんでした: '+e.message);closeSheet();props=null;return;}
+  renderProps();
+}
+const fmtSize=b=>b>=1048576?(b/1048576).toFixed(1)+' MB':Math.round(b/1024)+' KB';
+const fmtDate=t=>t?new Date(t*1000).toLocaleString('ja-JP',{year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
+const joinV=v=>v.join('\n');
+function renderProps(){
+  if(!props||sheetKind!=='props'||!props.meta)return;
+  const P=props,m=P.meta,song=P.k==='song',ro=!m.writable;
+  const tabs=song?[['tags','タグ'],['all','すべてのタグ'],['cover','カバー'],['file','ファイル']]:[['tags','タグ'],['cover','カバー']];
+  let body=`<div class="props"><div class="seg">${tabs.map(([t,l])=>`<button class="chip ${P.tab===t?'pri':''}" data-act="propsTab" data-t="${t}">${l}</button>`).join('')}</div>`;
+  if(ro)body+=`<div class="warn">このファイルには書き込めないので、表示だけです(音楽フォルダが読み取り専用でつながれている可能性があります)。</div>`;
+  if(m.error)body+=`<div class="warn">${esc(m.error)}</div>`;
+  if(P.tab==='tags'){
+    const names=song?Object.keys(FIELD_LABEL):['album','albumartist','date','genre'];
+    if(!song)body+=`<p class="note">${m.tracks} 曲すべてに書きます。「曲ごとに違う」の項目は、入力したときだけ書きます。空にした項目は全曲から消します。</p>`;
+    body+=`<div class="form">${names.map(n=>{const orig=m.fields[n],v=P.df[n]!=null?P.df[n]:(orig||'');
+      const ph=orig===null?'(曲ごとに違う)':'';
+      return n==='comment'?`<label class="full" style="flex-direction:column;align-items:stretch">${FIELD_LABEL[n]}<textarea data-f="${n}" rows="2" ${ro?'readonly':''}>${esc(v)}</textarea></label>`
+        :`<label>${FIELD_LABEL[n]}<input data-f="${n}" value="${esc(v)}" placeholder="${ph}" ${ro?'readonly':''}></label>`;}).join('')}</div>`;
+    body+=histHtml(song?m.history:m.history.filter(x=>x.tracks>1));
+  }else if(P.tab==='all'){
+    body+=`<p class="note">タグの形式: ${esc((m.kind||'').toUpperCase())}。値が複数あるときは 1 行に 1 つ。空にするとそのタグを消します。</p><div class="tg">`;
+    m.tags.forEach(t=>{const v=P.dt[t.key]!=null?P.dt[t.key]:joinV(t.values);
+      body+=`<code>${esc(t.key)}</code>`+(t.editable&&!ro?`<textarea data-tk="${esc(t.key)}" rows="${Math.min(6,Math.max(1,v.split('\n').length))}">${esc(v)}</textarea>`:`<div class="ro">${esc(joinV(t.values))}</div>`);});
+    for(let i=0;i<P.nk.length;i+=2)body+=`<input data-nk="${i}" placeholder="新しいタグ名" value="${esc(P.nk[i])}"><textarea data-nk="${i+1}" rows="1" placeholder="値">${esc(P.nk[i+1])}</textarea>`;
+    body+=`</div>${ro?'':`<div style="padding:0 16px 12px"><button class="btn ghost sm" data-act="propsAddTag">${ico('add',16)}タグを追加</button></div>`}`;
+  }else if(P.tab==='cover'){
+    const src=song?(m.hasCover?`${API}/api/tracks/${P.s.dbid}/cover?t=${Date.now()}`:''):(P.al.art?`${API}/api/art/${P.al.dbid}?size=1000&v=${P.al.artv}`:'');
+    body+=`<div class="cov">${src?`<img src="${src}" alt="">`:`<div class="none">カバーなし</div>`}<div class="acts">
+      <p class="note" style="margin:0">${song?'この曲のファイルに埋め込みます。':`${m.tracks} 曲すべてに埋め込みます。`} JPEG か PNG(20MB まで)。</p>
+      ${ro?'':`<button class="btn tonal sm" data-act="propsCover">${ico('add',16)}画像を選んで差し替える</button>`}
+      ${song&&m.hasCover&&!ro?`<button class="btn ghost sm" data-act="propsCoverDel">${ico('close',16)}埋め込みの画像を消す</button>`:''}
+      <input type="file" id="propscover" accept="image/jpeg,image/png" hidden></div></div>`;
+    body+=histHtml(song?m.history:m.history.filter(x=>x.tracks>1));
+  }else{
+    const f=m.file,sr=f.sampleRate?(f.sampleRate/1000)+' kHz':'—';
+    const rows=[['場所',`${f.source} / ${f.rel}`],['形式',`${f.codec}${m.kind?`(タグ: ${m.kind.toUpperCase()})`:''}`],['サンプルレート',sr],['ビット深度',f.bitDepth?f.bitDepth+' bit':'—'],
+      ['ビットレート',f.kbps?f.kbps+' kbps':'—'],['長さ',fmtT(Math.round(f.durationMs/1000))],['サイズ',fmtSize(f.size)],['ファイルの更新日',fmtDate(f.mtime)],
+      ['ライブラリに追加',fmtDate(f.addedAt)],['再生回数',`${f.plays} 回(スキップ ${f.skips} 回)`],['最後に再生',fmtDate(f.lastPlayed)],
+      ['タグの補い',[f.tagFixed?'文字化けを直して表示':'',f.tagGuessed?'ファイル名・フォルダ名から補った':''].filter(Boolean).join('、')||'なし']];
+    body+=`<div class="panel" style="margin:0 8px 8px">${rows.map(r=>`<div class="prow"><span class="tt"><small>${r[0]}</small><b style="font-weight:500;overflow-wrap:anywhere">${esc(String(r[1]))}</b></span></div>`).join('')}</div>`;
+  }
+  body+='</div>';
+  const save=!ro&&(P.tab==='tags'||P.tab==='all')?`<button class="btn sm" data-act="propsSave" ${P.busy?'disabled':''}>${ico('check',16)}保存</button>`:'';
+  openSheet('props',esc(song?P.s.t:P.al.t),body,save);
+}
+// 履歴に出すタグ名: 形式ごとのキーを項目名に直す(知らないキーはそのまま)
+const KEY_NAME=(()=>{const m={},add=(f,...ks)=>ks.forEach(k=>m[k.toLowerCase()]=FIELD_LABEL[f].replace(/\(.*/,''));
+  add('title','TITLE','TIT2','\xa9nam','Title');add('artist','ARTIST','TPE1','\xa9ART','Author');add('album','ALBUM','TALB','\xa9alb','WM/AlbumTitle');
+  add('albumartist','ALBUMARTIST','TPE2','aART','WM/AlbumArtist','Album Artist');add('date','DATE','TDRC','\xa9day','WM/Year','Year');add('genre','GENRE','TCON','\xa9gen','WM/Genre');
+  add('tracknumber','TRACKNUMBER','TRCK','trkn','WM/TrackNumber','Track');add('discnumber','DISCNUMBER','TPOS','disk','WM/PartOfSet','Disc');
+  add('composer','COMPOSER','TCOM','\xa9wrt','WM/Composer');add('comment','COMMENT','COMM::eng','\xa9cmt','Description');return m;})();
+const keyName=k=>KEY_NAME[k.toLowerCase()]||(k.startsWith('COMM:')?'コメント':k);
+function histHtml(h){
+  if(!h||!h.length)return '';
+  return `<div class="hist"><p class="note" style="margin:8px 8px 6px">編集の履歴</p><div class="panel">${h.slice(0,5).map(x=>`<div class="prow"><span class="tt"><b style="font-weight:500">${esc(x.keys.map(keyName).join('、'))}</b><small>${fmtDate(x.at)}${x.tracks>1?` ・ ${x.tracks} 曲まとめて`:''}${x.reverted?' ・ 元に戻し済み':''}</small></span>${x.reverted?'':`<button class="btn ghost sm" data-act="propsRevert" data-id="${x.id}">元に戻す</button>`}</div>`).join('')}</div></div>`;
+}
+async function propsAfter(msg){
+  const P=props,sid=P.s&&P.s.dbid,firstDb=P.al?SONGS[P.al.tr[0]].dbid:null;
+  try{await loadLibrary();}catch(e){}
+  render(true);renderMini();renderXP();toast(msg);
+  if(sheetKind!=='props')return;
+  const s=byDb.get(sid!=null?sid:firstDb);
+  if(s==null){closeSheet();return;}
+  openProps(P.k,P.k==='song'?s:SONGS[s].al);
+}
+async function propsSave(){
+  const P=props,m=P.meta,fields={},tags={};
+  for(const[k,v]of Object.entries(P.df)){const o=m.fields[k];if(o===null?v.trim()!=='':v!==(o||''))fields[k]=v;}
+  if(P.k==='song'){
+    for(const t of m.tags){const v=P.dt[t.key];if(v==null||!t.editable||v===joinV(t.values))continue;const l=v.split('\n').map(x=>x.trim()).filter(Boolean);tags[t.key]=l.length?l:null;}
+    for(let i=0;i<P.nk.length;i+=2){const k=P.nk[i].trim(),v=P.nk[i+1].split('\n').map(x=>x.trim()).filter(Boolean);if(k&&v.length)tags[k]=v;}
+  }
+  if(!Object.keys(fields).length&&!Object.keys(tags).length){toast('変更はありません');return;}
+  P.busy=true;renderProps();
+  try{
+    if(P.k==='song')await api(`/api/tracks/${P.s.dbid}/meta`,{method:'PUT',json:{fields,tags}});
+    else await api(`/api/albums/${P.al.dbid}/meta`,{method:'PUT',json:{fields}});
+  }catch(e){P.busy=false;renderProps();toast('保存できませんでした: '+e.message);return;}
+  propsAfter('タグを保存しました');
+}
+function propsCoverPick(){
+  const i=$('#propscover');if(!i)return;
+  i.onchange=async()=>{const f=i.files[0];if(!f)return;if(f.size>20*1048576){toast('画像が大きすぎます(20MB まで)');return;}
+    const P=props;toast('カバー画像を書き込んでいます…');
+    try{await api(P.k==='song'?`/api/tracks/${P.s.dbid}/cover`:`/api/albums/${P.al.dbid}/cover`,{method:'PUT',body:f,headers:{'Content-Type':f.type||'application/octet-stream'}});}
+    catch(e){toast('カバー画像を書き込めませんでした: '+e.message);return;}
+    propsAfter('カバー画像を差し替えました');};
+  i.click();
+}
+async function propsCoverDel(){
+  if(!confirm('この曲に埋め込まれたカバー画像を消しますか?(履歴から元に戻せます)'))return;
+  try{await api(`/api/tracks/${props.s.dbid}/cover`,{method:'DELETE'});}catch(e){toast('消せませんでした: '+e.message);return;}
+  propsAfter('埋め込みのカバー画像を消しました');
+}
+async function propsRevert(id){
+  try{const r=await api(`/api/tagedits/${id}/revert`,{method:'POST'});propsAfter(r.tracks>1?`${r.tracks} 曲を元に戻しました`:'元に戻しました');}
+  catch(e){toast('元に戻せませんでした: '+e.message);}
 }
 function queueSheet(){
   const rem=totalD(st.q.slice(st.qi));
@@ -1409,6 +1537,14 @@ const ACT={
   lyrMenu:()=>lyrMenuSheet(),
   lyrPaste:()=>lyrPasteSheet(),
   lyrPasteSave:()=>{const t=$('#lyrtext').value;if(!t.trim()){toast('歌詞を入力してください');return;}closeSheet();lyrSave(cur().id,'PUT','',{text:t},'歌詞を保存しました');},
+  propsSong:d=>openProps('song',+d.id),
+  propsAlbum:d=>openProps('album',+d.id),
+  propsTab:d=>{props.tab=d.t;renderProps();},
+  propsSave:()=>propsSave(),
+  propsAddTag:()=>{props.nk.push('','');renderProps();},
+  propsCover:()=>propsCoverPick(),
+  propsCoverDel:()=>propsCoverDel(),
+  propsRevert:d=>propsRevert(+d.id),
   lyrFile:()=>{const i=$('#lyrfile');if(!i)return;i.onchange=async()=>{const f=i.files[0];if(!f)return;if(f.size>2e6){toast('ファイルが大きすぎます');return;}
     const t=await readTextFile(f);closeSheet();lyrSave(cur().id,'PUT','',{text:t},`${f.name} を読み込みました`);};i.click();},
   lyrClear:()=>{closeSheet();lyrSave(cur().id,'DELETE','/manual',undefined,'手動で登録した歌詞を削除しました');},
@@ -1513,6 +1649,7 @@ document.addEventListener('input',e=>{
   const t=e.target;
   if(t.id==='qf'){st.lib.q=t.value;const r=route();const body=pageLibrary(r.b);const tmp=document.createElement('div');tmp.innerHTML=body;$('#libbody').innerHTML=tmp.querySelector('#libbody').innerHTML;markPlaying();markSel();}
   if(t.id==='sq'){st.searchQ=t.value;$('#sres').innerHTML=searchBody();markPlaying();}
+  if(t.dataset&&props){if(t.dataset.f)props.df[t.dataset.f]=t.value;if(t.dataset.tk)props.dt[t.dataset.tk]=t.value;if(t.dataset.nk!=null)props.nk[t.dataset.nk]=t.value;}
   if(t.dataset&&t.dataset.rng){st.set[t.dataset.rng]=+t.value;t.nextElementSibling.textContent=t.value+t.dataset.u;saveSettings();}
 });
 /* 波形のシーク */
@@ -1579,7 +1716,7 @@ async function loadLibrary(){
   const aIdx=new Map();
   d.albums.forEach(r=>{const a=C(d.albumColumns,r);aIdx.set(a.id,AL.length);
     AL.push({id:AL.length,dbid:a.id,t:a.title,a:a.artist,y:a.year||0,h:a.hue!=null?a.hue:hashHue(a.title+a.artist),f:'',g:a.genre||'',
-             tr:[],added:a.addedAt,src:a.source,art:!!a.hasArt,folder:a.folder});});
+             tr:[],added:a.addedAt,src:a.source,art:!!a.hasArt,artv:a.art||'',folder:a.folder});});
   d.tracks.forEach(r=>{const t=C(d.trackColumns,r),ai=aIdx.get(t.albumId);if(ai==null)return;const al=AL[ai];
     const s={id:SONGS.length,dbid:t.id,al:ai,n:t.no||al.tr.length+1,disc:t.disc||1,t:t.title,ar:t.artist,d:Math.max(1,Math.round(t.durationMs/1000)),
       plays:t.plays,fav:!!t.fav,rating:t.rating,ago:t.lastPlayed?Math.floor((d.now-t.lastPlayed)/86400):999,skips:t.skips,
@@ -1633,7 +1770,7 @@ function liveOnTrack(){
 function mediaMeta(s){
   if(!('mediaSession' in navigator)||!s)return;const al=alOf(s);
   try{navigator.mediaSession.metadata=new MediaMetadata({title:s.t,artist:s.ar||al.a,album:al.t,
-    artwork:al.art?[300,1000].map(z=>({src:new URL(`${API}/api/art/${al.dbid}?size=${z}`,location.href).href,sizes:`${z}x${z}`,type:'image/jpeg'})):[]});}catch(e){}
+    artwork:al.art?[300,1000].map(z=>({src:new URL(`${API}/api/art/${al.dbid}?size=${z}&v=${al.artv||''}`,location.href).href,sizes:`${z}x${z}`,type:'image/jpeg'})):[]});}catch(e){}
 }
 if(LIVE){
   audio.preload='auto';
