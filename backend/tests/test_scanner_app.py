@@ -143,3 +143,15 @@ def test_server_and_index(client):
     assert {x["codec"]: x["playable"] for x in s["codecs"]}["TTA"] is False
     html = c.get("/").text
     assert "window.OTOKURA_API=''" in html and "<title>音蔵</title>" in html
+
+
+def test_pwa_files(client):
+    c, _ = client
+    assert 'rel="manifest"' in c.get("/").text
+    m = c.get("/manifest.webmanifest")
+    assert m.headers["content-type"].startswith("application/manifest+json")
+    assert m.json()["display"] == "standalone" and {i["sizes"] for i in m.json()["icons"]} >= {"192x192", "512x512"}
+    sw = c.get("/sw.js")
+    assert "javascript" in sw.headers["content-type"] and sw.headers["cache-control"] == "no-cache"
+    assert c.get("/icon-192.png").headers["content-type"] == "image/png"
+    assert c.get("/index.html").status_code == 404 and c.get("/nothing.png").status_code == 404

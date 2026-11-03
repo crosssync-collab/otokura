@@ -285,6 +285,18 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     def healthz():
         return {"ok": True}
 
+    # ホーム画面に追加するためのファイル(PWA)。決まった名前だけ配る
+    web_files = {"manifest.webmanifest": "application/manifest+json", "sw.js": "text/javascript",
+                 "icon.svg": "image/svg+xml", "icon-192.png": "image/png", "icon-512.png": "image/png",
+                 "icon-180.png": "image/png"}
+
+    @app.get("/{name}", include_in_schema=False)
+    def web_file(name: str):
+        p = cfg.web_dir / name if cfg.web_dir and name in web_files else None
+        if not p or not p.is_file():
+            raise HTTPException(404)
+        return FileResponse(p, media_type=web_files[name], headers={"Cache-Control": "no-cache"})
+
     if start_background:
         @app.on_event("startup")
         def _start():

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5a3fb0"/>
+      <stop offset="1" stop-color="#2c1d63"/>
+    </linearGradient>
+  </defs>
+  <!-- 全面を塗る(Android のマスク・iOS の角丸は OS 側で切る)。絵は中央 60% に収める -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- 蔵の屋根 -->
+  <path d="M136 214 L256 140 L376 214" fill="none" stroke="#f3eeff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- レコード -->
+  <circle cx="256" cy="290" r="96" fill="#f3eeff"/>
+  <circle cx="256" cy="290" r="66" fill="none" stroke="#5a3fb0" stroke-width="5" opacity=".45"/>
+  <circle cx="256" cy="290" r="30" fill="#c9b8ff"/>
+  <circle cx="256" cy="290" r="8" fill="#2c1d63"/>
+</svg>
