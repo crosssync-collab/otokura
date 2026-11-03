@@ -262,6 +262,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "codecs": [{"codec": r["codec"], "tracks": r["n"], "playable": r["codec"] in metadata.BROWSER_PLAYABLE}
                        for r in unplayable],
             "lrclib": cfg.lrclib,
+            "castUrl": cfg.cast_url,
             "dataDir": str(cfg.data_dir),
         }
 

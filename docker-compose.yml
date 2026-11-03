@@ -14,6 +14,7 @@ services:
       OTOKURA_SOURCES: "Lossless=/music/Lossless,1.Lossy=/music/1.Lossy"
       OTOKURA_SCAN_AT: "03:00"     # 毎日の差分スキャン。空にすると自動では行わない
       OTOKURA_LRCLIB: "1"          # 歌詞が無い曲だけ LRCLIB から探す。0 で無効
+      OTOKURA_CAST_URL: "${OTOKURA_CAST_URL:-}"   # Google Cast の機器が曲を取りに来る家の中のアドレス
       OTOKURA_LYRICS: "/music/lyrics"  # 横にもタグにも歌詞が無い曲は、ここの「アーティスト - 曲名.lrc/.txt」を探す
     volumes:
       # 音楽フォルダ。タグの編集(プロパティ)で音楽ファイルに書き込むので読み書きできるようにつなぐ

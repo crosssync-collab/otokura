@@ -22,6 +22,7 @@ class Config:
     lrclib: bool = True
     web_dir: Path | None = None
     lyrics_dirs: list[Path] = field(default_factory=list)   # 「アーティスト - 曲名.lrc」が並ぶ歌詞フォルダ
+    cast_url: str | None = None   # Google Cast の機器が曲を取りに来るアドレス(家の中の http://NAS:8686)
 
     @property
     def db_path(self) -> Path:
@@ -67,4 +68,5 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         lrclib=e.get("OTOKURA_LRCLIB", "1") not in ("0", "false", "no"),
         web_dir=Path(web) if web else None,
         lyrics_dirs=[Path(p.strip()) for p in e.get("OTOKURA_LYRICS", "").split(",") if p.strip()],
+        cast_url=(e.get("OTOKURA_CAST_URL") or "").rstrip("/") or None,
     )

@@ -536,8 +536,8 @@ let pendingSeek=0;
 /* 再生位置は小数秒。モックでは時計から、LIVE では audio 要素から求める */
 {let _pos=0,_t0=performance.now();
  Object.defineProperty(st,'pos',{enumerable:true,configurable:true,
-   get(){if(LIVE)return audio.readyState?audio.currentTime:pendingSeek;return st.playing?_pos+(performance.now()-_t0)/1000:_pos;},
-   set(v){if(LIVE){pendingSeek=v;if(audio.readyState){try{audio.currentTime=v;}catch(e){}}return;}_pos=v;_t0=performance.now();}});}
+   get(){if(LIVE&&castOn())return castPos();if(LIVE)return audio.readyState?audio.currentTime:pendingSeek;return st.playing?_pos+(performance.now()-_t0)/1000:_pos;},
+   set(v){if(LIVE&&castOn()){castSeek(v);return;}if(LIVE){pendingSeek=v;if(audio.readyState){try{audio.currentTime=v;}catch(e){}}return;}_pos=v;_t0=performance.now();}});}
 const vis=s=>st.src[alOf(s).src];
 const visAl=a=>st.src[a.src];
 const cur=()=>SONGS[st.q[st.qi]];
@@ -1214,6 +1214,7 @@ function markPlaying(){
 function songChanged(){if(!cur())return;if(LIVE)liveOnTrack();saveQueue();setHue();loadLyrics(cur().id);renderMini();renderXP();markPlaying();if(sheetKind==='queue')queueSheet();}
 let timer=null;
 function setPlaying(v){
+  if(LIVE&&castOn()){castPlay(v);return;}
   if(LIVE){
     clearInterval(timer);
     if(v){if(!ensureSrc())return;st.playing=true;audio.play().catch(e=>{if(e.name==='AbortError')return;st.playing=false;toast('再生できませんでした: '+e.message);renderMini();renderXP();markPlaying();});}
@@ -1227,7 +1228,7 @@ function setPlaying(v){
 }
 function step(dir,auto){
   const n=st.q.length;
-  if(auto&&st.rep===2){st.pos=0;updateProg();if(LIVE&&st.playing)audio.play().catch(()=>{});return;}
+  if(auto&&st.rep===2){if(LIVE&&castOn()){castLoad(cur(),0,true);return;}st.pos=0;updateProg();if(LIVE&&st.playing)audio.play().catch(()=>{});return;}
   if(dir<0&&st.pos>3){st.pos=0;updateProg();return;}
   let i=st.qi+dir;
   if(i>=n){if(st.rep===1||!auto)i=0;else{st.pos=0;setPlaying(false);return;}}
@@ -1451,7 +1452,7 @@ function queueSheet(){
   openSheet('queue',`再生キュー <small class="muted" style="font-size:13px;font-family:var(--body);font-weight:400">${st.q.length} 曲 ・ 残り ${fmtTotal(rem)}</small>`,rows||`<div class="empty">キューは空です</div>`,
     `<button class="btn tonal sm" data-act="shufQ">${ico('shuffle',16)}シャッフル</button><button class="btn ghost sm" data-act="clearQ">クリア</button>`);
 }
-function outSheet(){openSheet('out','再生先',outList());}
+function outSheet(){openSheet('out','再生先',LIVE?outListLive():outList());}
 function srcSheet(){
   openSheet('src','ソースの絞り込み',`<p class="muted" style="margin:0 12px 8px;font-size:13px">一覧、シャッフル、ミックスのすべてに反映されます。</p><div class="panel">${SRCS.map(s=>`<div class="prow"><span class="tt"><b>${s.name}</b><small>${s.path}</small></span><button class="sw" role="switch" aria-checked="${st.src[s.id]}" aria-label="${s.name}" data-act="srcToggle" data-id="${s.id}"></button></div>`).join('')}</div>`);
 }
@@ -1597,7 +1598,9 @@ const ACT={
   mvUp:d=>moveQ(+d.i,+d.i-1),mvDown:d=>moveQ(+d.i,+d.i+1),
   shufQ:()=>{const c=st.q[st.qi];const rest=st.q.filter((_,i)=>i!==st.qi);st.q=[c,...spread(shuffle(rest))];st.qi=0;queueSheet();toast('残りの曲を並べ替えました');},
   clearQ:()=>{const c=st.q[st.qi];st.q=[c];st.qi=0;queueSheet();},
-  out:d=>{const o=OUTS.find(z=>z[0]===d.k);if(!o[4]){toast(o[1]+' は応答がありません。電源とネットワークを確認してください。');return;}st.out=d.k;renderMini();renderXP();if(sheetKind==='out')outSheet();else refresh();toast(o[1]+' に切り替えました');},
+  castPick:()=>castPick(),
+  castStop:()=>castStop(),
+  out:d=>{if(LIVE){if(d.k==='browser'&&castOn())castStop();return;}const o=OUTS.find(z=>z[0]===d.k);if(!o[4]){toast(o[1]+' は応答がありません。電源とネットワークを確認してください。');return;}st.out=d.k;renderMini();renderXP();if(sheetKind==='out')outSheet();else refresh();toast(o[1]+' に切り替えました');},
   discover:()=>{toast('ネットワーク上のデバイスを検索しています…');setTimeout(()=>toast('4 台のデバイスが見つかりました(1 台は応答なし)'),1400);},
   swSet:d=>{st.set[d.k]=!st.set[d.k];applyAfterSet();saveSettings();},
   segSet:d=>{st.set[d.k]=d.v;applyAfterSet();saveSettings();},
@@ -1648,6 +1651,7 @@ document.addEventListener('input',e=>{
   const t=e.target;
   if(t.id==='qf'){st.lib.q=t.value;const r=route();const body=pageLibrary(r.b);const tmp=document.createElement('div');tmp.innerHTML=body;$('#libbody').innerHTML=tmp.querySelector('#libbody').innerHTML;markPlaying();markSel();}
   if(t.id==='sq'){st.searchQ=t.value;$('#sres').innerHTML=searchBody();markPlaying();}
+  if(t.id==='castvol'&&castOn()){castP.volumeLevel=+t.value/100;castC.setVolumeLevel();t.nextElementSibling.textContent=t.value;}
   if(t.dataset&&props){if(t.dataset.f)props.df[t.dataset.f]=t.value;if(t.dataset.tk)props.dt[t.dataset.tk]=t.value;if(t.dataset.nk!=null)props.nk[t.dataset.nk]=t.value;}
   if(t.dataset&&t.dataset.rng){st.set[t.dataset.rng]=+t.value;t.nextElementSibling.textContent=t.value+t.dataset.u;saveSettings();}
 });
@@ -1764,7 +1768,9 @@ function liveOnTrack(){
     if(++skipChain>=Math.min(st.q.length,20)){skipChain=0;setPlaying(false);toast('このキューには、いま再生できる曲がありません');return;}
     toast(`${s.codec} は次の段階で再生できるようにします。次の曲へ進みます`);setTimeout(()=>step(1,true),0);return;
   }
-  skipChain=0;ensureSrc();audio.play().then(()=>{switching=false;}).catch(()=>{});
+  skipChain=0;
+  if(castOn()){castLoad(s,0,true);return;}
+  ensureSrc();audio.play().then(()=>{switching=false;}).catch(()=>{});
 }
 function mediaMeta(s){
   if(!('mediaSession' in navigator)||!s)return;const al=alOf(s);
@@ -1774,12 +1780,7 @@ function mediaMeta(s){
 if(LIVE){
   audio.preload='auto';
   audio.addEventListener('loadedmetadata',()=>{if(pendingSeek){try{audio.currentTime=pendingSeek;}catch(e){}}pendingSeek=0;});
-  audio.addEventListener('timeupdate',()=>{
-    const t=audio.currentTime,dt=t-lt.last;lt.last=t;if(dt>0&&dt<2)lt.listened+=dt;
-    const s=cur();
-    if(s&&!lt.counted&&lt.listened>=Math.min(240,s.d/2)){lt.counted=true;s.plays++;s.ago=0;api(`/api/tracks/${s.dbid}/played`,{method:'POST'}).catch(()=>{});}
-    if(Math.floor(t)%5===0)saveQueue();
-  });
+  audio.addEventListener('timeupdate',()=>{if(!castOn())onListen(audio.currentTime);});
   audio.addEventListener('ended',()=>{lt.ended=true;step(1,true);});
   audio.addEventListener('pause',()=>{if(switching||audio.ended||!st.playing)return;st.playing=false;clearInterval(timer);renderMini();renderXP();markPlaying();});
   audio.addEventListener('play',()=>{switching=false;if(st.playing)return;st.playing=true;clearInterval(timer);timer=setInterval(updateProg,250);renderMini();renderXP();markPlaying();});
@@ -1789,6 +1790,96 @@ if(LIVE){
     h('play',()=>setPlaying(true));h('pause',()=>setPlaying(false));h('nexttrack',()=>step(1));h('previoustrack',()=>step(-1));
     h('seekto',e=>{st.pos=e.seekTime;updateProg();});}
   addEventListener('beforeunload',saveQueue);
+}
+
+// 再生回数とスキップの記録(このブラウザでも Cast でも、再生位置が進むたびに呼ぶ)
+function onListen(t){
+  const dt=t-lt.last;lt.last=t;if(dt>0&&dt<2)lt.listened+=dt;
+  const s=cur();
+  if(s&&!lt.counted&&lt.listened>=Math.min(240,s.d/2)){lt.counted=true;s.plays++;s.ago=0;api(`/api/tracks/${s.dbid}/played`,{method:'POST'}).catch(()=>{});}
+  if(Math.floor(t)%5===0)saveQueue();
+}
+
+/* --- Google Cast(Chrome の Cast 機能)。機器は NAS の家の中のアドレス(castUrl)から曲を直接取りに行く。
+       キューはこの画面が持つので、画面を開いている間だけ次の曲へ進む --- */
+var castP=null,castC=null,castS=null,castM=null,castUrl='',castT={t:0,at:0},castReady=false;   // st.pos から先に参照されるので var
+function castOn(){return !!castS;}
+const castBase=()=>(SERVER&&SERVER.castUrl)||location.origin;
+const CAST_MIME={FLAC:'audio/flac',MP3:'audio/mpeg',AAC:'audio/mp4',Vorbis:'audio/ogg',Opus:'audio/ogg',WAV:'audio/wav'};
+function castPos(){const s=cur(),p=castT.t+(st.playing?(performance.now()-castT.at)/1000:0);return s?Math.min(p,s.d):p;}
+window.__onGCastApiAvailable=ok=>{
+  if(!ok)return;
+  const ctx=cast.framework.CastContext.getInstance(),E=cast.framework.RemotePlayerEventType;
+  ctx.setOptions({receiverApplicationId:chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,autoJoinPolicy:chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED});
+  castP=new cast.framework.RemotePlayer();castC=new cast.framework.RemotePlayerController(castP);
+  castC.addEventListener(E.IS_CONNECTED_CHANGED,()=>castConnected(castP.isConnected));
+  castC.addEventListener(E.CURRENT_TIME_CHANGED,()=>{if(!castOn())return;castT={t:castP.currentTime,at:performance.now()};onListen(castP.currentTime);});
+  castC.addEventListener(E.IS_PAUSED_CHANGED,()=>{if(!castOn()||!castM)return;const v=!castP.isPaused;if(v!==st.playing){castT={t:castP.currentTime,at:performance.now()};st.playing=v;castRender();}});
+  castC.addEventListener(E.VOLUME_LEVEL_CHANGED,()=>{const r=$('#castvol');if(r&&document.activeElement!==r){r.value=Math.round(castP.volumeLevel*100);r.nextElementSibling.textContent=r.value;}});
+  castReady=true;if(sheetKind==='out')outSheet();
+  if(castP.isConnected)castConnected(true);
+};
+function castRender(){clearInterval(timer);if(st.playing)timer=setInterval(updateProg,250);renderMini();renderXP();markPlaying();updateProg();}
+function castConnected(on){
+  const ctx=cast.framework.CastContext.getInstance();
+  if(on&&!castS){
+    castS=ctx.getCurrentSession();if(!castS)return;
+    const name=castS.getCastDevice().friendlyName||'Google Cast',pos=audio.readyState?audio.currentTime:pendingSeek,play=st.playing;
+    switching=true;audio.pause();switching=false;
+    OUTS.splice(1);OUTS.push(['cast',name,'Google Cast','cast',true,'']);st.out='cast';
+    castT={t:pos,at:performance.now()};
+    if(cur())castLoad(cur(),pos,play);
+    toast(name+' で再生します');
+  }else if(!on&&castS){
+    const pos=castPos(),name=(OUTS[1]||[])[1]||'Google Cast';
+    castS=null;castM=null;castUrl='';OUTS.splice(1);st.out='browser';st.playing=false;
+    if(cur()){ensureSrc();st.pos=pos;}
+    toast(name+' から切断しました。このブラウザで続きから再生できます');
+  }else return;
+  castRender();if(sheetKind==='out')outSheet();
+}
+function castLoad(s,pos,play){
+  if(!castS||!s)return;
+  if(!s.playable||!CAST_MIME[s.codec]){toast(`${s.codec} は Cast で再生できないので、次の曲へ進みます`);setTimeout(()=>step(1,true),0);return;}
+  const al=alOf(s),base=castBase(),url=`${base}/api/tracks/${s.dbid}/stream`;
+  const mi=new chrome.cast.media.MediaInfo(url,CAST_MIME[s.codec]),md=new chrome.cast.media.MusicTrackMediaMetadata();
+  md.title=s.t;md.artist=s.ar||al.a;md.albumName=al.t;
+  if(al.art)md.images=[new chrome.cast.Image(`${base}/api/art/${al.dbid}?size=1000&v=${al.artv||''}`)];
+  mi.metadata=md;mi.streamType=chrome.cast.media.StreamType.BUFFERED;
+  const req=new chrome.cast.media.LoadRequest(mi);req.currentTime=pos||0;req.autoplay=play!==false;
+  castUrl=url;castT={t:pos||0,at:performance.now()};st.playing=play!==false;castRender();
+  castS.loadMedia(req).then(()=>{
+    const m=castS&&castS.getMediaSession();if(!m)return;castM=m;
+    // 曲が最後まで終わったら次の曲へ(この画面が開いている間だけ)
+    m.addUpdateListener(alive=>{if(!alive&&m===castM&&m.idleReason===chrome.cast.media.IdleReason.FINISHED&&castUrl===url){lt.ended=true;step(1,true);}});
+  },e=>{st.playing=false;castRender();
+    toast('Cast で再生できませんでした'+(location.hostname.endsWith('.ts.net')&&!(SERVER&&SERVER.castUrl)?'(機器から NAS に届くアドレスが設定されていません)':`(${e&&e.code||e})`));});
+}
+function castPlay(v){
+  if(!castM||castM.playerState===chrome.cast.media.PlayerState.IDLE){if(v)castLoad(cur(),castPos(),true);return;}
+  if(castP.isPaused===v)castC.playOrPause();
+  castT={t:castPos(),at:performance.now()};st.playing=v;castRender();
+}
+function castSeek(v){if(!castM)return;castP.currentTime=v;castC.seek();castT={t:v,at:performance.now()};}
+function castPick(){
+  if(!castReady){toast('Google Cast は Chrome で https のアドレスから開いたときに使えます');return;}
+  cast.framework.CastContext.getInstance().requestSession().catch(e=>{if(e!=='cancel'&&e!==chrome.cast.ErrorCode.CANCEL)toast('Cast の機器に接続できませんでした: '+e);});
+}
+function castStop(){if(castOn())cast.framework.CastContext.getInstance().endCurrentSession(true);}
+function outListLive(){
+  const on=castOn(),name=on?OUTS[1][1]:'';
+  const vol=on?Math.round((castP.volumeLevel||0)*100):0;
+  return `<div class="group">この端末</div><div class="panel"><button class="radio" role="radio" aria-checked="${!on}" data-act="out" data-k="browser"><span class="dot"></span><span class="tt" style="flex:1;min-width:0"><b style="font-weight:500">このブラウザ</b><br><small class="muted">いま開いている端末で再生</small></span></button></div>
+  <div class="group">Google Cast(Nest・Chromecast・Google TV)</div><div class="panel">
+    ${on?`<div class="radio" role="radio" aria-checked="true"><span class="dot"></span><span class="tt" style="flex:1;min-width:0"><b style="font-weight:500">${esc(name)}</b><br><small class="muted">Google Cast で再生中</small></span><button class="btn ghost sm" data-act="castStop">切断</button></div>
+      <div class="prow"><span class="tt"><b style="font-weight:500">音量</b></span><span class="rng"><input type="range" id="castvol" min="0" max="100" value="${vol}"><output>${vol}</output></span></div>`
+    :`<button class="prow" data-act="castPick">${ico('cast')}<span class="tt" style="flex:1"><b style="font-weight:500">Google Cast の機器を選ぶ</b><small>${castReady?'Chrome の一覧から選びます':'Chrome で https のアドレスから開いたときに使えます'}</small></span></button>`}
+  </div>
+  <p class="muted" style="font-size:13px;margin:10px 4px">Cast 中も、次の曲へ進むのはこの画面を開いている間です。機器は NAS の家の中のアドレス(${esc(castBase())})から曲を取りに行きます。</p>
+  <div class="group">DLNA / UPnP</div><div class="panel"><div class="prow"><span class="tt"><b style="font-weight:500">準備中</b><small>DLNA の機器は、NAS から機器を操作する仕組みが必要です</small></span></div></div>`;
+}
+if(LIVE&&window.isSecureContext&&/Chrome\//.test(navigator.userAgent)){
+  const sc=document.createElement('script');sc.src='https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';sc.async=true;document.head.appendChild(sc);
 }
 
 /* --- スキャン・サーバー情報 --- */
@@ -1822,7 +1913,7 @@ function livePage(sub){
       <button class="btn sm" data-act="scan">${ico('refresh',18)}今すぐスキャン</button><button class="btn ghost sm" data-act="scanFull" title="変わっていないファイルもタグを読み直します">すべて読み直す</button></div></div>
     ${S.scan.errorCount?`<div class="group">読めなかったファイル(${S.scan.errorCount})</div><div class="panel">${S.scan.errors.map(e=>`<div class="prow"><span class="tt"><small>${esc(e)}</small></span></div>`).join('')}</div>`:''}
     <p class="muted" style="font-size:13px;margin:14px 4px">フォルダの追加や変更は、NAS の docker-compose.yml にある <code>OTOKURA_SOURCES</code> とボリュームで行います。音蔵は音楽ファイルに書き込みません。</p>`};
-  if(sub==='outputs')return {title:'再生先',back:true,html:`${outList()}<p class="muted" style="font-size:13px;margin:14px 4px">Chromecast・Google スピーカー・DLNA / UPnP 機器へのキャストは次の段階で対応します。</p>`};
+  if(sub==='outputs')return {title:'再生先',back:true,html:outListLive()};
   if(sub==='formats')return {title:'形式と変換',back:true,html:`<div class="panel">${S.codecs.map(c=>`<div class="prow"><span class="tt"><b>${esc(c.codec)}</b><small>${c.tracks.toLocaleString()} 曲</small></span><span class="chip ${c.playable?'ok':''}">${c.playable?'直接再生':'次の段階で変換配信'}</span></div>`).join('')||'<div class="prow"><span class="tt">まだ曲がありません</span></div>'}</div>`};
   return {title:'サーバー情報',back:true,html:`<div class="panel">${[['アプリのバージョン',S.version],['Python',S.python],['待ち受け',location.origin],['データフォルダ',S.dataDir+'(データベース、カバーの縮小画像)'],['歌詞の外部取得',S.lrclib?'LRCLIB(歌詞が無い曲だけ)':'使わない'],['前回のスキャン',ago(S.lastScan)]].map(r=>`<div class="prow"><span class="tt"><b>${r[0]}</b><small>${esc(r[1])}</small></span></div>`).join('')}</div>`};
 }
