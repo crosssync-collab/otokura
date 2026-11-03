@@ -617,7 +617,9 @@ function pageHome(){
   const sc2=[['mixTrack','mix','曲ミックス'],['mixDecade','mix','年代ミックス'],['srcSheet','filter','ソース'],['outSheet','cast','再生先']];
   const btn=(a,i,t)=>`<button data-act="${['albums','artists','genres','songs','playlists','folders'].includes(a)?'lib':a}" data-t="${a}"><span class="ic">${ico(i,26)}</span><span>${t}</span></button>`;
   const albums=AL.filter(visAl);
-  const recent=albums.slice().sort((a,b)=>Math.min(...songsOfAl(a.id).map(s=>s.ago))-Math.min(...songsOfAl(b.id).map(s=>s.ago))).slice(0,8);
+  // 最近再生したアルバム: 最後に再生した時刻の新しい順(左が一番最近)。再生していないアルバムは出さない。モックは日数で並べる
+  const lastOf=a=>Math.max(...songsOfAl(a.id).map(s=>s.last||(s.ago<999?-s.ago*86400:-1e12)));
+  const recent=albums.filter(a=>songsOfAl(a.id).some(s=>s.last||s.ago<999)).sort((a,b)=>lastOf(b)-lastOf(a)).slice(0,8);
   const added=albums.slice().sort((a,b)=>b.added-a.added).slice(0,8);
   const topA=albums.slice().sort((a,b)=>songsOfAl(b.id).reduce((x,s)=>x+s.plays,0)-songsOfAl(a.id).reduce((x,s)=>x+s.plays,0)).slice(0,8);
   if(!st.rand)st.rand=shuffle(albums).slice(0,8).map(a=>a.id);
@@ -633,7 +635,7 @@ function pageHome(){
    <div class="sc ${S.hs==='grid'?'':S.hs}" style="margin-top:-6px">${sc2.map(x=>btn(...x)).join('')}</div>
    ${hr(S.h_mixes,'ミックス',`<div class="shelf">${mixes}</div>`)}
    ${hr(S.h_quick,'クイックピック',`<div class="shelf">${quick.length?quick.map(songCard).join(''):'<span class="muted">お気に入りの曲がここに並びます</span>'}</div>`,'<span class="muted" style="font-size:13px">お気に入りからランダム</span>')}
-   ${hr(S.h_recent,'最近再生したアルバム',`<div class="shelf">${recent.map(albumCard).join('')}</div>`,`<a href="${href('library/albums')}">すべて ${ico('chev',18)}</a>`)}
+   ${hr(S.h_recent&&recent.length,'最近再生したアルバム',`<div class="shelf">${recent.map(albumCard).join('')}</div>`,`<a href="${href('library/albums')}">すべて ${ico('chev',18)}</a>`)}
    ${hr(S.h_added,'最近追加されたアルバム',`<div class="shelf">${added.map(albumCard).join('')}</div>`,`<a href="${href('library/albums')}">すべて ${ico('chev',18)}</a>`)}
    ${hr(S.h_top,'よく聴いているアルバム',`<div class="shelf">${topA.map(albumCard).join('')}</div>`)}
    ${hr(S.h_random,'ランダムなアルバム',`<div class="shelf">${rand.map(albumCard).join('')}</div>`,`<button data-act="rerand" aria-label="更新">${ico('refresh',20)}</button>`)}`;
@@ -1773,7 +1775,7 @@ async function loadLibrary(){
              tr:[],added:a.addedAt,src:a.source,art:!!a.hasArt,artv:a.art||'',folder:a.folder});});
   d.tracks.forEach(r=>{const t=C(d.trackColumns,r),ai=aIdx.get(t.albumId);if(ai==null)return;const al=AL[ai];
     const s={id:SONGS.length,dbid:t.id,al:ai,n:t.no||al.tr.length+1,disc:t.disc||1,t:t.title,ar:t.artist,d:Math.max(1,Math.round(t.durationMs/1000)),
-      plays:t.plays,fav:!!t.fav,rating:t.rating,ago:t.lastPlayed?Math.floor((d.now-t.lastPlayed)/86400):999,skips:t.skips,
+      plays:t.plays,fav:!!t.fav,rating:t.rating,ago:t.lastPlayed?Math.floor((d.now-t.lastPlayed)/86400):999,last:t.lastPlayed||0,skips:t.skips,
       codec:t.codec,playable:PLAYABLE.includes(t.codec),rel:t.rel,src:t.source,fmt:fmtLabel(t)};
     SONGS.push(s);al.tr.push(s.id);if(!al.f)al.f=s.fmt;
     if(t.artist!==al.a&&al.a!=='Various Artists'){const l=APPEARS[t.artist]=APPEARS[t.artist]||[];if(!l.includes(ai))l.push(ai);}
@@ -1849,7 +1851,7 @@ if(LIVE){
 function onListen(t){
   const dt=t-lt.last;lt.last=t;if(dt>0&&dt<2)lt.listened+=dt;
   const s=cur();
-  if(s&&!lt.counted&&lt.listened>=Math.min(240,s.d/2)){lt.counted=true;s.plays++;s.ago=0;if(!s.local)api(`/api/tracks/${s.dbid}/played`,{method:'POST'}).catch(()=>{});}
+  if(s&&!lt.counted&&lt.listened>=Math.min(240,s.d/2)){lt.counted=true;s.plays++;s.ago=0;s.last=Date.now()/1000;if(!s.local)api(`/api/tracks/${s.dbid}/played`,{method:'POST'}).catch(()=>{});}
   if(Math.floor(t)%5===0)saveQueue();
 }
 
