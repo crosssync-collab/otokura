@@ -489,7 +489,7 @@ const st={
   lib:{sort:{albums:'name',artists:'name',genres:'name',songs:'name'},view:{albums:'grid',artists:'list',genres:'grid'},q:''},
   fpath:[],sel:null,searchQ:'',rand:null,
   set:{theme:'system',dyn:true,radius:'中',hs:'grid',h_mixes:true,h_quick:true,h_recent:true,h_added:true,h_top:true,h_random:true,
-       np_bg:'tint',np_rating:true,np_wave:true,np_tap:'lyrics',np_lyrsize:'中',np_lyrblur:true,np_lyrprev:true,np_lyrfetch:true,
+       np_bg:'tint',np_rating:true,np_wave:true,np_tap:'lyrics',np_lyrsize:'中',np_lyrblur:true,np_lyrprev:true,np_lyrfetch:true,np_lyrest:true,
        mixSize:30,exclRecent:30,exclSkip:true,rg:true,gap:true,fade:true,cache:'50 GB',libview:'grid'},
   providers:[
     {name:'Lossless',url:'/home/cross/1.music/Lossless',kind:'NAS 上のフォルダ',ok:true,tracks:9820,last:'今日 03:00'},
@@ -758,6 +758,7 @@ const SETS={
     ['seg','np_lyrsize','文字の大きさ','',[['小','小'],['中','中'],['大','大']]],
     ['sw','np_lyrblur','歌い終えた行をぼかす','いま歌っている行が目立ちます'],
     ['sw','np_lyrprev','カバーの下に歌詞を表示','再生中画面で、いまの行と次の行を表示します'],
+    ['sw','np_lyrest','時刻の無い歌詞も流して表示','曲の長さと行の長さから時刻を推定します。前奏・間奏の長さは分からないので、ずれたら − ＋(1 秒ずつ)で合わせてください'],
     ['sw','np_lyrfetch','歌詞が無い曲は LRCLIB から探す','手元のファイルとタグに歌詞が無い曲だけ問い合わせます。音楽ファイルは書き換えません']]},
   mix:{title:'ミックス',icon:'mix',desc:'ミックスの長さと選び方',items:[
     ['rng','mixSize','ミックスの曲数','',[5,100,5,'曲']],
@@ -904,9 +905,29 @@ function lyrUpdated(id){const s=cur();lyrPrevKey=null;if(s&&s.id===id&&st.xp&&st
 const clamp01=x=>x<0?0:x>1?1:x;
 function bsearch(lines,t){let lo=0,hi=lines.length-1,r=-1;while(lo<=hi){const m=(lo+hi)>>1;if(lines[m].start<=t){r=m;lo=m+1;}else hi=m-1;}return r;}
 let lyrDom=null,lyrPrevKey=null;
+// 時刻の無い歌詞に、曲の長さと行の長さ(文字数)から時刻を割り当てる(推定)。
+// 前奏・後奏は曲の長さの 8%・6%(8〜25 秒・5〜20 秒)と見なし、空行(段落の切れ目)には 1 行分の間を空ける
+function estimateTimes(main,durMs){
+  const W=t=>2+[...t].reduce((a,ch)=>a+(ch<'\x80'?.5:1),0);
+  const items=[];
+  main.lines.forEach(l=>{if(l.text)items.push({text:l.text,w:W(l.text)});else if(items.length&&!items[items.length-1].gap)items.push({gap:true,w:0});});
+  while(items.length&&items[items.length-1].gap)items.pop();
+  const ws=items.filter(x=>!x.gap),avg=ws.reduce((a,x)=>a+x.w,0)/Math.max(1,ws.length);
+  items.forEach(x=>{if(x.gap)x.w=avg;});
+  const t0=Math.min(25000,Math.max(8000,durMs*.08)),t1=durMs-Math.min(20000,Math.max(5000,durMs*.06));
+  const span=Math.max(1000,t1-t0),total=items.reduce((a,x)=>a+x.w,0)||1;
+  let t=t0;const lines=[];
+  items.forEach(x=>{const d=span*x.w/total;if(!x.gap)lines.push({start:Math.round(t),end:Math.round(t+d*.92),text:x.text});t+=d;});
+  return {...main,synced:true,estimated:true,lines};
+}
+// 表示に使う歌詞(main)。時刻が無く、推定が有効なら推定した時刻つきを返す
+const lyrMain=(s,ly)=>{const m=ly&&ly.layers&&ly.layers.find(l=>l.kind==='main');
+  if(!m||m.synced||!st.set.np_lyrest||!m.lines.some(l=>l.text))return m;
+  if(!m._est||m._est.d!==s.d)m._est={d:s.d,v:estimateTimes(m,s.d*1000)};
+  return m._est.v;};
 function lyrEmpty(html){const r=document.createElement('div');r.innerHTML=`<div class="lyrempty">${html}</div>`;return {root:r,synced:false};}
 function buildLyrics(s,c,key){
-  const d=c.data,ly=d&&d.lyrics,main=ly&&ly.layers&&ly.layers.find(l=>l.kind==='main');
+  const d=c.data,ly=d&&d.lyrics,main=lyrMain(s,ly);
   let o;
   if(c.state==='loading'&&!ly)o=lyrEmpty(`<b>${c.fetching?'LRCLIB で探しています…':'歌詞を読み込んでいます…'}</b>`);
   else if(c.state==='error')o=lyrEmpty(`<b>歌詞を読み込めませんでした</b><span>${esc(c.err||'')}</span><button class="btn tonal sm" data-act="lyrReload">${ico('refresh',18)}もう一度読み込む</button>`);
@@ -955,7 +976,7 @@ function buildSynced(main){
 function mountLyrics(){
   const slot=$('#lyrslot'),s=cur();if(!slot||!s)return;
   const c=lyrCache.get(s.id)||{state:'loading',v:0};
-  const key=`${s.id}:${c.v||0}:${st.set.np_lyrsize}:${st.set.np_lyrblur}`;
+  const key=`${s.id}:${c.v||0}:${st.set.np_lyrsize}:${st.set.np_lyrblur}:${st.set.np_lyrest}`;
   if(!lyrDom||lyrDom.key!==key)lyrDom=buildLyrics(s,c,key);
   slot.appendChild(lyrDom.root);
   if(lyrDom.synced){lyrDom.cur=-2;lyrDom.active=-2;lyrDom.target=null;lyrDom.userAt=-1e9;syncLyrics(lyrNow(s),true);}
@@ -988,7 +1009,7 @@ function syncLyrics(t,jump){
 }
 function updatePreview(s,t){
   const el=$('#lprev');if(!el)return;
-  const c=lyrCache.get(s.id),ly=c&&c.data&&c.data.lyrics,main=ly&&ly.layers&&ly.layers.find(l=>l.kind==='main');
+  const c=lyrCache.get(s.id),ly=c&&c.data&&c.data.lyrics,main=lyrMain(s,ly);
   if(!main||!main.synced||!main.lines.length){if(lyrPrevKey!=='none'){el.hidden=true;lyrPrevKey='none';}return;}
   const L=main.lines.filter(l=>l.text),ci=bsearch(L,t),ai=ci>=0&&t<L[ci].end?ci:-1;
   const key=`${s.id}:${ci}:${ai}`;if(key===lyrPrevKey)return;lyrPrevKey=key;
@@ -998,10 +1019,11 @@ function updatePreview(s,t){
 function lyrBar(s){
   const c=lyrCache.get(s.id),d=c&&c.data,ly=d&&d.lyrics;
   if(!ly||!ly.layers||!ly.layers.length||ly.instrumental)return `<div class="lyrbar"><span class="sp"></span><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button></div>`;
-  const sync=ly.hasWords?'語ごと':ly.synced?'行ごと':'同期なし';
+  const est=(lyrMain(s,ly)||{}).estimated,step=est?1000:100;
+  const sync=ly.hasWords?'語ごと':ly.synced?'行ごと':est?'時刻は推定':'同期なし';
   const off=d.offsetMs||0;
-  return `<div class="lyrbar"><span class="chip ${ly.synced?'pri':''}" title="歌詞の出どころと同期の細かさ">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
-    ${ly.synced?`<span class="offc" title="ずれの補正(＋で歌詞を早く出す)"><button data-act="lyrOff" data-d="-100" aria-label="歌詞を 0.1 秒遅く出す">−</button><output id="lyroff">${(off>0?'+':'')+(off/1000).toFixed(1)}秒</output><button data-act="lyrOff" data-d="100" aria-label="歌詞を 0.1 秒早く出す">＋</button></span>`:''}
+  return `<div class="lyrbar"><span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。ずれたら − ＋ で合わせてください':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
+    ${ly.synced||est?`<span class="offc" title="ずれの補正(＋で歌詞を早く出す)"><button data-act="lyrOff" data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す">−</button><output id="lyroff">${(off>0?'+':'')+(off/1000).toFixed(1)}秒</output><button data-act="lyrOff" data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す">＋</button></span>`:''}
     <button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button></div>`;
 }
 function lyrFrame(){
