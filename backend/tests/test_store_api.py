@@ -101,8 +101,8 @@ def test_miss_is_remembered(env):
 
 def test_offset_and_upload_cp932(env):
     c, *_ = env
-    r = c.put("/api/tracks/3/lyrics/offset", json={"offsetMs": 99999}).json()
-    assert r["offsetMs"] == 10000
+    r = c.put("/api/tracks/3/lyrics/offset", json={"offsetMs": 999999}).json()
+    assert r["offsetMs"] == 300000
     r = c.post("/api/tracks/3/lyrics/upload",
                files={"file": ("x.lrc", "[00:01.00]アップロード".encode("cp932"))}).json()
     assert r["lyrics"]["layers"][0]["lines"][0]["text"] == "アップロード"

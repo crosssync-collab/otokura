@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS lyrics_user (
 """
 
 LRCLIB_RETRY_S = 30 * 86400   # 見つからなかった曲は 30 日は再問い合わせしない
+OFFSET_MAX_MS = 300000        # ずれの補正の上限。時刻を推定した歌詞は 1 行ずつ動かすので大きめ(5 分)
 
 
 @dataclass
@@ -156,7 +157,7 @@ class LyricsStore:
     # ---------- 利用者の操作 ----------
     @_locked
     def set_offset(self, track_id: str, offset_ms: int) -> None:
-        offset_ms = max(-10000, min(10000, int(offset_ms)))
+        offset_ms = max(-OFFSET_MAX_MS, min(OFFSET_MAX_MS, int(offset_ms)))
         self._ensure_user(track_id)
         self.db.execute("UPDATE lyrics_user SET offset_ms=? WHERE track_id=?", (offset_ms, track_id))
         self.db.commit()

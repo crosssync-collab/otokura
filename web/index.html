@@ -824,7 +824,7 @@ const SETS={
     ['seg','np_lyrsize','文字の大きさ','',[['小','小'],['中','中'],['大','大']]],
     ['sw','np_lyrblur','歌い終えた行をぼかす','いま歌っている行が目立ちます'],
     ['sw','np_lyrprev','カバーの下に歌詞を表示','再生中画面で、いまの行と次の行を表示します'],
-    ['sw','np_lyrest','時刻の無い歌詞も流して表示','曲の長さと行の長さから時刻を推定します。前奏・間奏の長さは分からないので、ずれたら − ＋(1 秒ずつ)で合わせてください'],
+    ['sw','np_lyrest','時刻の無い歌詞も流して表示','曲の長さと行の長さから時刻を推定します。前奏・間奏の長さは分からないので、ずれたら ↑↓(1 行ずつ)で合わせてください'],
     ['sw','np_lyrfetch','歌詞が無い曲は LRCLIB から探す','手元のファイルとタグに歌詞が無い曲だけ問い合わせます。音楽ファイルは書き換えません']]},
   mix:{title:'ミックス',icon:'mix',desc:'ミックスの長さと選び方',items:[
     ['rng','mixSize','ミックスの曲数','',[5,100,5,'曲']],
@@ -1096,7 +1096,7 @@ function lyrBarIn(s){
   const sync=ly.hasWords?'語ごと':ly.synced?'行ごと':est?'時刻は推定':'同期なし';
   const off=d.offsetMs||0;
   return `<div class="lyrbar">${info}<span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。ずれたら − ＋ で合わせてください':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
-    ${ly.synced||est?`<span class="offc" title="歌詞のずれの補正: ↑で歌詞を早く、↓で遅く出す"><button data-act="lyrOff" data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す">${ico('up',18)}</button><output id="lyroff">${offLabel(off)}</output><button data-act="lyrOff" data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す">${ico('down',18)}</button></span>`:''}
+    ${ly.synced||est?`<span class="offc" title="${est?'歌詞のずれの補正: ↑で次の行、↓で前の行を今の位置に合わせる':'歌詞のずれの補正: ↑で歌詞を早く、↓で遅く出す'}"><button data-act="lyrOff" ${est?'data-line="1" aria-label="次の行を今の位置に合わせる"':`data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す"`}>${ico('up',18)}</button><output id="lyroff">${offLabel(off)}</output><button data-act="lyrOff" ${est?'data-line="-1" aria-label="前の行を今の位置に合わせる"':`data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す"`}>${ico('down',18)}</button></span>`:''}
     <button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
 }
 // 歌詞だけ(全画面)のときに歌詞バーに出す、再生・一時停止と「写真に戻る」(下の歌詞ボタンが隠れるため)
@@ -1628,7 +1628,11 @@ const ACT={
     const t=await readTextFile(f);closeSheet();lyrSave(cur().id,'PUT','',{text:t},`${f.name} を読み込みました`);};i.click();},
   lyrClear:()=>{closeSheet();lyrSave(cur().id,'DELETE','/manual',undefined,'手動で登録した歌詞を削除しました');},
   lyrOff:d=>{const s=cur(),c=lyrCache.get(s.id);if(!c||!c.data)return;
-    const v=Math.max(-10000,Math.min(10000,(c.data.offsetMs||0)+(+d.d)));c.data.offsetMs=v;
+    let v=(c.data.offsetMs||0)+(+d.d||0);
+    if(d.line){   // 時刻を推定した歌詞: 前後の行がちょうど今の位置に来るようにずらす
+      const m=lyrMain(s,c.data.lyrics),L=m.lines.filter(l=>l.text),now=st.pos*1000,ci=bsearch(L,now+(c.data.offsetMs||0)),t=L[Math.max(0,Math.min(L.length-1,ci+(+d.line)))];
+      if(t)v=Math.round(t.start-now+30);}
+    v=Math.max(-300000,Math.min(300000,v));c.data.offsetMs=v;
     const o=$('#lyroff');if(o)o.textContent=offLabel(v);lyrPrevKey=null;
     clearTimeout(offTimer);const id=s.id;offTimer=setTimeout(()=>lyrRequest(id,'PUT','/offset',{offsetMs:v}).catch(()=>toast('ずれの補正を保存できませんでした')),600);},
   shufMode:()=>{
