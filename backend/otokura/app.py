@@ -15,7 +15,6 @@ from pathlib import Path
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
-from urllib.parse import urlparse
 
 from . import __version__, art, metadata
 from .config import Config, from_env
@@ -52,7 +51,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         return metadata.BROWSER_PLAYABLE | (TRANSCODE_CODECS if tc.available else set())
 
     webinfo = WebInfo(db, cfg.art_dir) if cfg.webinfo else None
-    dlna = Dlna(db, urlparse(cfg.cast_url).hostname if cfg.cast_url else None)
+    dlna = Dlna(db)
     app.state.webinfo, app.state.dlna = webinfo, dlna
 
     def bump():

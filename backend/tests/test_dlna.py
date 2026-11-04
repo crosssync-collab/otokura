@@ -103,9 +103,6 @@ def test_ssdp_and_helpers():
     assert dlna.parse_ssdp(f"HTTP/1.1 200 OK\r\nST: {dlna.ST}\r\nLocation: http://x/d.xml\r\n\r\n".encode()) == "http://x/d.xml"
     assert dlna.parse_ssdp(b"HTTP/1.1 200 OK\r\nST: urn:schemas-upnp-org:device:MediaServer:1\r\nLOCATION: http://x/\r\n\r\n") is None
     assert dlna.parse_ssdp(b"NOTIFY * HTTP/1.1\r\nLOCATION: http://x/\r\n\r\n") is None
-    hosts = dlna.subnet_hosts("192.168.0.252")
-    assert len(hosts) == 253 and "192.168.0.1" in hosts and "192.168.0.252" not in hosts
-    assert dlna.subnet_hosts("8.8.8.8") == [] and dlna.subnet_hosts(None) == []
     assert dlna.hms(3725) == "1:02:05" and dlna.parse_hms("0:03:20.500") == 200.5 and dlna.parse_hms("NOT_IMPLEMENTED") is None
     assert dlna.is_private_url("http://127.0.0.1:1/") and not dlna.is_private_url("http://8.8.8.8/") and not dlna.is_private_url("file:///etc/passwd")
 
@@ -137,8 +134,7 @@ def test_control_through_api(tmp_path, fake, monkeypatch):
                  lrclib=False, webinfo=False, cast_url="http://192.168.0.252:8686")
     app = create_app(cfg, start_background=False)
     app.state.scanner.run()
-    monkeypatch.setattr(dlna, "subnet_hosts", lambda ip: ["127.0.0.1"])
-    app.state.dlna.port = fake.ssdp_port
+    app.state.dlna.hosts, app.state.dlna.port = ["127.0.0.1"], fake.ssdp_port
     c = TestClient(app)
     j = c.get("/api/library").json()
     t = {r[j["trackColumns"].index("codec")]: r[0] for r in j["tracks"]}
@@ -181,12 +177,44 @@ def test_control_through_api(tmp_path, fake, monkeypatch):
     assert res.status_code == 206 and len(res.content) == 100
 
 
+def test_add_by_ip_finds_device_that_answers_only_multicast(tmp_path, fake, monkeypatch):
+    # foobar2000 Renderer などは、マルチキャストの M-SEARCH にしか返事をしない。IP の手入力でも見つけられるように
+    from otokura.db import Database
+    calls = []
+
+    def only_multicast(hosts=None, timeout=3.0, port=dlna.SSDP_PORT, multicast=True):
+        calls.append(multicast)
+        return [fake.location, "http://192.168.0.99:1/other.xml"] if multicast else []
+    monkeypatch.setattr(dlna, "discover", only_multicast)
+    d = dlna.Dlna(Database(tmp_path / "d.db"))
+    assert d.add("127.0.0.1").name == "書斎のプレーヤー" and calls[0] is True
+    with pytest.raises(dlna.DlnaError):
+        d.add("192.168.0.200")                      # 返事の中に無いアドレスは足さない
+
+
+def test_search_uses_multicast_and_sends_twice(monkeypatch):
+    # UDP は落ちることがあるので 2 回送る。同じネットワークの全アドレスへの直接送信はしない
+    sent = []
+
+    class S:
+        def setsockopt(self, *a): pass
+        def settimeout(self, *a): pass
+        def sendto(self, data, addr): sent.append(addr)
+        def recvfrom(self, n): raise socket.timeout
+        def close(self): pass
+    monkeypatch.setattr(dlna.socket, "socket", lambda *a: S())
+    assert dlna.discover(timeout=0.01) == []
+    assert sent == [(dlna.SSDP_ADDR, dlna.SSDP_PORT)] * 2
+
+
 def test_manual_add_and_remove(tmp_path, fake):
     from otokura.db import Database
     d = dlna.Dlna(Database(tmp_path / "d.db"), port=fake.ssdp_port)
+    d.hosts = ["127.0.0.1"]
     assert d.add(fake.location).manual
     assert list(d.devices.values())[0].name == "書斎のプレーヤー"
     d2 = dlna.Dlna(d.db, port=fake.ssdp_port)      # 再起動しても手で足した機器は残る
+    d2.hosts = ["127.0.0.1"]
     d2.search()
     did = next(iter(d2.devices))
     assert d2.devices[did].manual

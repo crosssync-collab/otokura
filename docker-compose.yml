@@ -6,15 +6,16 @@ services:
     restart: unless-stopped
     # NAS 上の自分のユーザーで動かす(`id` コマンドで確認した数字を .env に書く)
     user: "${PUID:-1000}:${PGID:-1000}"
-    ports:
-      - "${OTOKURA_PORT:-8686}:8686"
+    # DLNA の機器を探すマルチキャスト(SSDP)はブリッジの外へ出ないので、host ネットワークで動かす。ポートは OTOKURA_PORT
+    network_mode: host
     environment:
       TZ: Asia/Tokyo
+      OTOKURA_PORT: "${OTOKURA_PORT:-8686}"
       # 画面に出す名前=コンテナ内のパス(下の volumes と合わせる)
       OTOKURA_SOURCES: "Lossless=/music/Lossless,1.Lossy=/music/1.Lossy"
       OTOKURA_SCAN_AT: "03:00"     # 毎日の差分スキャン。空にすると自動では行わない
       OTOKURA_LRCLIB: "1"          # 歌詞が無い曲だけ LRCLIB から探す。0 で無効
-      OTOKURA_CAST_URL: "${OTOKURA_CAST_URL:-}"   # Google Cast・DLNA の機器が曲を取りに来る家の中のアドレス。DLNA の機器を探す範囲にも使う
+      OTOKURA_CAST_URL: "${OTOKURA_CAST_URL:-}"   # Google Cast・DLNA の機器が曲を取りに来る家の中のアドレス
       OTOKURA_WEBINFO: "${OTOKURA_WEBINFO:-1}"    # アーティスト画像・アルバム情報を Web から取る。0 で無効
       OTOKURA_TRANSCODE_MAX_GB: "${OTOKURA_TRANSCODE_MAX_GB:-20}"   # 変換したファイルを残しておく上限(GB)
       OTOKURA_LYRICS: "/music/lyrics"  # 横にもタグにも歌詞が無い曲は、ここの「アーティスト - 曲名.lrc/.txt」を探す

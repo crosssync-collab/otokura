@@ -112,7 +112,7 @@ OTOKURA_SOURCES=Lossless=/music/Lossless,1.Lossy=/music/1.Lossy
 
 ## DLNA・UPnP(otokura.dlna)
 
-- 探す: SSDP の M-SEARCH を、マルチキャストと、`OTOKURA_CAST_URL` と同じ /24 の各アドレスへの直接送信の両方で送る。Docker のブリッジのままで動く(host ネットワークは要らない)。見つからない機器は IP アドレスを手で足せる(`meta.dlna_manual` に残す)
+- 探す: SSDP の M-SEARCH をマルチキャストで送る。コンテナは host ネットワークで動かす(ブリッジではマルチキャストが外へ出ない。直接送っても、機器は毎回違うポートから返事をするので NAT に捨てられ、foobar2000 Renderer のように直接送った分には答えない機器もある)。IP アドレスを入れると、返事の中からそのアドレスの機器を選んで残す(`meta.dlna_manual`)
 - 操作: AVTransport(SetAVTransportURI・Play・Pause・Stop・Seek・GetPositionInfo・GetTransportInfo)と RenderingControl(音量)の SOAP を NAS から送る。機器は `OTOKURA_CAST_URL` の `/api/tracks/{id}/stream?cast=1&dlna=1` を取りに来る(HEAD・Range・DLNA の応答ヘッダーに対応。48kHz を超える曲は Cast と同じく変換)
 - 画面は 1.5 秒ごとに状態を読む。止まったとき、最後に見た位置が曲の終わりの 6 秒以内なら次の曲へ、それ以外は機器側で止めたものとして止まる
 - キューは画面が持つ(Cast と同じ)ので、次の曲へ進むのは画面を開いている間

@@ -1,7 +1,7 @@
 """DLNA・UPnP の機器(ネットワークプレーヤー、AV アンプなど)を NAS から操作する。
 
-- 探す: SSDP の M-SEARCH。マルチキャストに加えて同じネットワークの各アドレスへ直接送る
-  (Docker のブリッジではマルチキャストが外へ出ないが、直接送れば機器は返事をくれる)。IP アドレスの手入力もできる
+- 探す: SSDP の M-SEARCH をマルチキャストで送る。Docker のブリッジではマルチキャストが外へ出ず、機器は毎回違うポートから
+  返事をするので NAT にも捨てられる。そのためコンテナは host ネットワークで動かす(docker-compose.yml)
 - 操作: AVTransport と RenderingControl の SOAP。機器が曲を NAS から取りに来るので、キューは画面が持つ(Cast と同じ)
 """
 from __future__ import annotations
@@ -56,19 +56,8 @@ def parse_ssdp(data: bytes) -> str | None:
     return head.get("location") or None
 
 
-def subnet_hosts(ip: str | None) -> list[str]:
-    """同じ /24 のアドレス。プライベートアドレスのときだけ。"""
-    try:
-        a = ipaddress.ip_address(ip or "")
-    except ValueError:
-        return []
-    if a.version != 4 or not a.is_private or a.is_loopback:
-        return []
-    return [str(h) for h in ipaddress.ip_network(f"{a}/24", strict=False).hosts() if h != a]
-
-
-def discover(hosts: list[str] | None = None, timeout: float = 2.5, port: int = SSDP_PORT, multicast: bool = True) -> list[str]:
-    """機器の説明ファイルの URL を集める。"""
+def discover(hosts: list[str] | None = None, timeout: float = 3.0, port: int = SSDP_PORT, multicast: bool = True) -> list[str]:
+    """機器の説明ファイルの URL を集める。hosts は直接送る先(マルチキャストに答えない機器・テスト用)。"""
     found: list[str] = []
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     try:
@@ -76,9 +65,10 @@ def discover(hosts: list[str] | None = None, timeout: float = 2.5, port: int = S
         s.settimeout(0.2)
         if multicast:
             try:
-                s.sendto(msearch(), (SSDP_ADDR, SSDP_PORT))
+                for _ in range(2):      # UDP は落ちることがある
+                    s.sendto(msearch(), (SSDP_ADDR, SSDP_PORT))
             except OSError as e:
-                log.debug("マルチキャストを送れません: %s", e)
+                log.warning("マルチキャストを送れません: %s", e)
         for h in hosts or []:
             try:
                 s.sendto(msearch(h, port), (h, port))
@@ -278,8 +268,9 @@ def parse_description(data: bytes, location: str, manual: bool = False) -> Rende
 class Dlna:
     """見つけた機器の一覧。手で足した機器は DB に残す。"""
 
-    def __init__(self, db, lan_ip: str | None = None, port: int = SSDP_PORT):
-        self.db, self.lan_ip, self.port = db, lan_ip, port
+    def __init__(self, db, port: int = SSDP_PORT):
+        self.db, self.port = db, port
+        self.hosts: list[str] = []      # マルチキャストのほかに直接 M-SEARCH を送る先
         self.devices: dict[str, Renderer] = {}
         self._lock = threading.Lock()
         self.searched_at: float | None = None
@@ -305,7 +296,7 @@ class Dlna:
     def search(self) -> list[Renderer]:
         with self._lock:
             manual = self._manual()
-            locations = discover(subnet_hosts(self.lan_ip), port=self.port)
+            locations = discover(self.hosts, port=self.port)
             devs: dict[str, Renderer] = {}
             for loc in locations:
                 d = self._describe(loc, loc in manual)
@@ -321,7 +312,7 @@ class Dlna:
             return list(devs.values())
 
     def add(self, address: str) -> Renderer:
-        """IP アドレス(そこへ直接 M-SEARCH する)か、説明ファイルの URL で機器を足す。"""
+        """IP アドレスか、説明ファイルの URL で機器を足す。IP アドレスは、探した返事の中からそのアドレスの機器を選ぶ。"""
         address = address.strip()
         if address.startswith(("http://", "https://")):
             locations = [address]
@@ -331,7 +322,9 @@ class Dlna:
                 ipaddress.ip_address(host)
             except ValueError as e:
                 raise DlnaError("IP アドレスか、機器の説明ファイルの URL を入力してください") from e
-            locations = discover([host], timeout=2.5, port=int(port) if port.isdigit() else self.port, multicast=False)
+            target = int(port) if port.isdigit() else self.port
+            locations = [x for x in discover(self.hosts, port=self.port) if urlparse(x).hostname == host] \
+                or discover([host], port=target, multicast=False)
             if not locations:
                 raise DlnaError(f"{host} から返事がありません。電源と、機器の DLNA の設定を確認してください")
         for loc in locations:
