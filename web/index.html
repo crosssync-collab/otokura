@@ -316,7 +316,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .pbig.playing{border-radius:38px}
 .xbot{display:flex;justify-content:space-around;margin-top:auto;padding-top:6px}
 .xbot button{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted);min-width:64px;padding:6px}
-.xbot button.on{color:var(--pri)}
+.xbot button.on,.lfbtn.on{color:var(--pri)}
 /* 再生中画面: 縦はそのまま並べる。横並び(.wide)はスマホの横向きのとき、または向きのボタンで「横」を選んだとき(PC でも) */
 .xl,.xr{display:contents}
 .lfbtn,.lfplay,.lfinfo,.lfseek{display:none!important}
@@ -1099,11 +1099,11 @@ function lyrBarIn(s){
     ${ly.synced||est?`<span class="offc" title="${est?'歌詞のずれの補正: ↑で次の行、↓で前の行を今の位置に合わせる':'歌詞のずれの補正: ↑で歌詞を早く、↓で遅く出す'}"><button data-act="lyrOff" ${est?'data-line="1" aria-label="次の行を今の位置に合わせる"':`data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す"`}>${ico('up',18)}</button><output id="lyroff">${offLabel(off)}</output><button data-act="lyrOff" ${est?'data-line="-1" aria-label="前の行を今の位置に合わせる"':`data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す"`}>${ico('down',18)}</button></span>`:''}
     <button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
 }
-// 歌詞だけ(全画面)のときに歌詞バーに出す、再生・一時停止と「写真に戻る」(下の歌詞ボタンが隠れるため)
+// 歌詞だけ(全画面)のときに歌詞バーに出す、前後の曲・再生と、下の段と同じ「歌詞」ボタン(下の段が隠れるため。押すと写真に戻る)
 const lyrFullBtns=()=>`<button class="ib sm lfplay" data-act="prev" aria-label="前の曲">${ico('prev',20)}</button>`
   +`<button class="ib sm lfplay" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',20)}</button>`
   +`<button class="ib sm lfplay" data-act="next" aria-label="次の曲">${ico('next',20)}</button>`
-  +`<button class="ib sm lfbtn" data-act="lyrFull" aria-label="写真に戻る" title="写真に戻る">${ico('album',20)}</button>`;
+  +`<button class="ib sm lfbtn on" data-act="lyrToggle" aria-label="歌詞(押すと写真に戻る)" title="歌詞(押すと写真に戻る)">${ico('lyrics',20)}</button>`;
 function lyrFrame(){
   requestAnimationFrame(lyrFrame);
   if(!st.xp)return;const s=cur();if(!s)return;
@@ -1604,7 +1604,6 @@ const ACT={
     else if(wide&&!st.lyrFull)st.lyrFull=true;
     else{st.lyr=false;st.lyrFull=false;}
     renderXP();},
-  lyrFull:()=>{st.lyr=false;st.lyrFull=false;renderXP();},   // 全画面の歌詞から写真へ(歌詞ボタンの一周の最後)
   oriCycle:()=>{ori=ORI[(ORI.indexOf(ori)+1)%ORI.length];oriSave();applyOri(false);toast(ORI_LABEL[ori]);renderXP();},
   wakeToggle:()=>{wake.on=!wake.on;try{localStorage.setItem('otokura.wake',wake.on?'1':'0');}catch(e){}
     wakeApply();toast(wake.on?'画面を消さないようにしました':'画面が自動で消えるように戻しました');renderXP();},
