@@ -302,6 +302,7 @@ button.chip[aria-pressed="true"],button.chip[aria-selected="true"]{background:va
 .tedb span{white-space:nowrap}
 .tedb.big{flex:2;background:var(--pri);color:var(--on-pri);font-size:13px;font-weight:600}
 .tedb:active{filter:brightness(.92)}
+.tedb:disabled{opacity:.4}
 .xp.ted .ctl,.xp.ted .xbot{display:none}
 .xp.wide.lyrfull .lyrbar.ted{justify-content:flex-start}
 .lprev{font-family:var(--display);font-weight:700;font-size:17px;line-height:1.45;cursor:pointer;padding:8px 12px;border-radius:16px;background:color-mix(in srgb,var(--s2) 70%,transparent);min-height:58px}
@@ -1019,7 +1020,8 @@ const lyrMain=(s,ly)=>{if(ted&&ted.kind==='line'&&ted.id===s.id)return ted.main;
 let ted=null,tmpOff=null;   // tmpOff={id,ms}: その場だけの調整。曲が変わったら消える
 const FAR=1e12;
 const tedDraftKey=s=>'otokura.lyrdraft.'+(s.dbid||s.id);
-function tedDraft(s,n){try{const d=JSON.parse(localStorage.getItem(tedDraftKey(s)));return d&&d.n===n&&d.k>=0?d:null;}catch(e){return null;}}
+const sungTexts=L=>L.filter(l=>l.text).map(l=>l.text).join('\n');
+function tedDraft(s,L){try{const d=JSON.parse(localStorage.getItem(tedDraftKey(s)));return d&&d.src&&d.k>=0&&sungTexts(d.src)===sungTexts(L)?d:null;}catch(e){return null;}}
 function tedLines(s,c){const m=lyrMain(s,c.data.lyrics);if(!m||!m.lines.some(l=>l.text))return null;
   const L=m.lines.filter((l,i,a)=>l.text||(a[i-1]&&a[i-1].text));while(L.length&&!L[L.length-1].text)L.pop();   // 先頭・末尾・連続の区切りは外す
   return L;}
@@ -1029,8 +1031,8 @@ function tedEnter(kind,resume){
   const back={lyr:st.lyr,full:st.lyrFull};st.lyr=true;if(isWide())st.lyrFull=true;
   if(kind==='off'){ted={kind,id:s.id,v:lyrOffset(s.id),back};tmpOff=null;}
   else{
-    const dr=resume&&tedDraft(s,L.length);
-    ted={kind,id:s.id,src:L,t:dr?dr.t:L.map(()=>null),e:dr?dr.e:L.map(()=>null),k:dr?dr.k:-1,v:0,back};
+    const dr=resume&&tedDraft(s,L);
+    ted={kind,id:s.id,src:dr?dr.src:L,t:dr?dr.t:L.map(()=>null),e:dr?dr.e:L.map(()=>null),k:dr?dr.k:-1,v:0,back};
     ted.main=tedMain();st.pos=dr?Math.max(0,ted.t[ted.k]/1000-3):0;tmpOff=null;
     if(!st.playing)setPlaying(true);else updateProg();
   }
@@ -1039,12 +1041,13 @@ function tedEnter(kind,resume){
 function tedExit(){if(!ted)return;const b=ted.back;ted=null;st.lyr=b.lyr;st.lyrFull=b.full;lyrPrevKey=null;renderXP();}
 function tedMain(){
   const r=ted;
-  const lines=r.src.map((l,i)=>{const t=r.t[i];if(t==null)return {start:FAR,end:FAR,text:l.text};
-    return {start:t,end:r.e[i]!=null?r.e[i]:r.t[i+1]!=null?r.t[i+1]:FAR-1,text:l.text};});   // 今の行は次を押すまで光らせたまま
+  const tx=l=>l.text||'␣';   // 編集中は空白行を ␣ で見せる(光っていれば、そこで待機中)
+  const lines=r.src.map((l,i)=>{const t=r.t[i];if(t==null)return {start:FAR,end:FAR,text:tx(l)};
+    return {start:t,end:r.e[i]!=null?r.e[i]:r.t[i+1]!=null?r.t[i+1]:FAR-1,text:tx(l)};});   // 今の行は次を押すまで光らせたまま
   return {kind:'main',synced:true,edit:true,lines};
 }
 function tedChanged(){const r=ted;r.main=tedMain();r.v++;
-  try{localStorage.setItem(tedDraftKey(SONGS[r.id]),JSON.stringify({n:r.src.length,t:r.t,e:r.e,k:r.k}));}catch(e){}
+  try{localStorage.setItem(tedDraftKey(SONGS[r.id]),JSON.stringify({src:r.src.map(l=>({start:l.start,end:l.end,text:l.text})),t:r.t,e:r.e,k:r.k}));}catch(e){}
   lyrPrevKey=null;renderXP();}
 function tedNext(){
   const r=ted,now=Math.round(st.pos*1000),N=r.src.length;
@@ -1054,6 +1057,9 @@ function tedNext(){
   r.k++;r.t[r.k]=now;r.e[r.k]=null;tedChanged();
 }
 function tedGap(){const r=ted,now=Math.round(st.pos*1000);if(r.k<0||now<=r.t[r.k])return;r.e[r.k]=now;tedChanged();}
+const tedNextBlank=()=>ted.src.findIndex((l,i)=>i>ted.k&&!l.text);
+function tedDelBlank(){const r=ted,j=tedNextBlank();if(j<0){toast('この先に空白行はありません');return;}
+  r.src=r.src.slice();[r.src,r.t,r.e].forEach(a=>a.splice(j,1));tedChanged();}
 function tedUndo(){const r=ted;if(r.k<0)return;r.t[r.k]=null;r.e[r.k]=null;r.k--;tedChanged();}
 function tedSave(){
   const r=ted,s=SONGS[r.id];
@@ -1075,12 +1081,12 @@ function tedCancel(){
 function tedSheet(){
   const s=cur(),c=lyrCache.get(s.id),d=c&&c.data,ly=d&&d.lyrics;
   if(s.local){toast('この端末の曲の歌詞は編集できません');return;}
-  const L=d&&ly&&tedLines(s,c),m=L&&lyrMain(s,ly),dr=L&&tedDraft(s,L.length);
+  const L=d&&ly&&tedLines(s,c),m=L&&lyrMain(s,ly),dr=L&&tedDraft(s,L);
   const opt=(act,icon,b,sm,attrs='')=>`<button class="mi" data-act="${act}" ${attrs}>${ico(icon,22)}<span><b>${b}</b><small>${sm}</small></span></button>`;
   openSheet('ted','歌詞のタイミングを編集',!L?`<p class="muted" style="margin:4px 14px 12px">この曲の歌詞はありません</p>`
     :(m.synced?opt('tedOff','sort','出だしの位置だけ調整','歌詞全体を同じだけ早く・遅くして保存します。行どうしの間隔はそのままです'):'')
     +opt('tedLine','lyrics','行ごとにタイミングを記録','曲を最初から流し、歌に合わせて「次の行」を押して 1 行ずつ記録します'+(ly.hasWords?'。<b style="color:var(--err)">語ごとの同期は消えます</b>':''))
-    +(dr?opt('tedLine','refresh','書きかけの続きから記録',`${dr.k+1} / ${L.length} 行まで記録しています`,'data-resume="1"'):'')
+    +(dr?opt('tedLine','refresh','書きかけの続きから記録',`${dr.k+1} / ${dr.src.length} 行まで記録しています`,'data-resume="1"'):'')
     +(d.hasPrev?mi('tedRestore','back','記録・登録する前の歌詞に戻す'):''));
 }
 function lyrEmpty(html){const r=document.createElement('div');r.innerHTML=`<div class="lyrempty">${html}</div>`;return {root:r,synced:false};}
@@ -1193,7 +1199,7 @@ function tedBar(s){
     ?b('tedHead','prev','最初から')+b('tedBack','back','10秒戻る','','data-d="10"')+play
       +b('tedNudge','up',est?'次の行へ':'0.1秒早く','','data-d="1"')+b('tedNudge','down',est?'前の行へ':'0.1秒遅く','','data-d="-1"')
     :b('tedBack','back','5秒戻る','','data-d="5"')+b('tedUndo','close','1行取り消す')+play
-      +b('tedGap','note','ここから間奏')+b('tedNext','down','次の行','big');
+      +b('tedGap','note','ここから間奏')+b('tedDelBlank','rows','次の␣を削除','',`title="次の空白行(␣)を削除" ${tedNextBlank()<0?'disabled':''}`)+b('tedNext','down','次の行','big');
   return `<div class="lyrbar ted">${head}<div class="tedrow">${row}</div></div>`;
 }
 // 全画面の歌詞のときだけ見える、曲の進み具合の線(タッチ・クリック・ドラッグで移動)
@@ -1750,6 +1756,7 @@ const ACT={
   tedNext:()=>ted&&tedNext(),
   tedGap:()=>ted&&tedGap(),
   tedUndo:()=>ted&&tedUndo(),
+  tedDelBlank:()=>ted&&tedDelBlank(),
   tedBack:d=>{st.pos=Math.max(0,st.pos-(+d.d||5));if(lyrDom){lyrDom.userAt=-1e9;lyrDom.target=null;}updateProg();renderMini();},
   tedHead:()=>{st.pos=0;updateProg();renderMini();if(!st.playing)setPlaying(true);},
   tedNudge:d=>{if(!ted||ted.kind!=='off')return;const s=cur(),c=lyrCache.get(s.id),m=lyrMain(s,c.data.lyrics);
