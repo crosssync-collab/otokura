@@ -1271,10 +1271,10 @@ function renderXP(){
       <button class="pbig ${st.playing?'playing':''}" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',38)}</button>
       <button class="ib" data-act="next" aria-label="次の曲">${ico('next',34)}</button>
       <button class="ib ${st.rep?'act':''}" data-act="repMode" aria-label="リピート" aria-pressed="${!!st.rep}">${ico(st.rep===2?'repeat1':'repeat',26)}</button></div>
-    <div class="xbot"><button class="${st.lyr?'on':''}" data-act="lyrToggle">${ico('lyrics')}<span>歌詞</span></button>
-      <button data-act="queueSheet">${ico('list')}<span>キュー</span></button>
+    <div class="xbot"><button data-act="queueSheet">${ico('list')}<span>キュー</span></button>
       <button data-act="mixInstant" data-id="${s.id}">${ico('mix')}<span>ミックス</span></button>
-      <button data-act="outSheet">${ico('cast')}<span>再生先</span></button></div></div>`;
+      <button data-act="outSheet">${ico('cast')}<span>再生先</span></button>
+      <button class="${st.lyr?'on':''}" data-act="lyrToggle">${ico('lyrics')}<span>歌詞</span></button></div></div>`;
   if(st.lyr)mountLyrics();
   applyMarquee(x);
   lyrPrevKey=null;
