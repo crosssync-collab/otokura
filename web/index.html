@@ -1231,8 +1231,9 @@ function tedBar(s){
 }
 // 全画面の歌詞のときだけ見える、曲の進み具合の線(タッチ・クリック・ドラッグで移動)
 const lyrSeek=s=>`<div class="lfseek"><span class="lft" id="lfcur">${fmtT(st.pos)}</span><div class="lftrack" id="lftrack" role="slider" tabindex="0" aria-label="再生位置" aria-valuemin="0" aria-valuemax="${s.d}"><i id="lff"></i><b id="lfk"></b></div><span class="lft">${fmtT(s.d)}</span></div>`;
-// ずれの補正の表示: 「0.5秒早く」「0.3秒遅く」「ずれなし」
+// ずれの補正の表示: 「0.5秒早く」「0.3秒遅く」「ずれなし」。歌詞の下のバーでは、ずれが無いとき「歌詞調整」と出す
 const offLabel=v=>v?`${(Math.abs(v)/1000).toFixed(1)}秒${v>0?'早く':'遅く'}`:'ずれなし';
+const offBarLabel=v=>v?offLabel(v):'歌詞調整';
 function lyrBarIn(s){
   const c=lyrCache.get(s.id),d=c&&c.data,ly=d&&d.lyrics;
   const has=!!(ly&&!ly.instrumental&&ly.layers&&ly.layers.some(l=>l.lines&&l.lines.some(x=>x.text)));   // 歌詞が無ければ種類の札もずれの調整も出さない
@@ -1242,7 +1243,7 @@ function lyrBarIn(s){
   const info=`<span class="lfinfo"><b>${esc(s.t)}</b><small>${esc(s.ar||alOf(s).a)}</small></span>`;
   if(!has)return `<div class="lyrbar">${info}<span class="sp"></span><span class="lfgrp"><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</span></div>`;
   return `<div class="lyrbar">${info}<span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。タイミング調整を長押しすると、行ごとに記録できます':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
-    ${ly.synced||est?`<span class="offc" title="その場だけの調整(保存しません)。↑で歌詞を先へ、↓で後へ。長押しか、真ん中の表示を 3 回続けて押すと編集モード(保存できます)"><button data-act="lyrOff" ${est?'data-line="1" aria-label="次の行を今の位置に合わせる"':`data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す"`}>${ico('up',18)}</button><output id="lyroff">${offLabel(lyrOffset(s.id))}</output><button data-act="lyrOff" ${est?'data-line="-1" aria-label="前の行を今の位置に合わせる"':`data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す"`}>${ico('down',18)}</button></span>`:''}
+    ${ly.synced||est?`<span class="offc" title="その場だけの調整(保存しません)。↑で歌詞を先へ、↓で後へ。長押しか、真ん中の表示を 3 回続けて押すと編集モード(保存できます)"><button data-act="lyrOff" ${est?'data-line="1" aria-label="次の行を今の位置に合わせる"':`data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す"`}>${ico('up',18)}</button><output id="lyroff">${offBarLabel(lyrOffset(s.id))}</output><button data-act="lyrOff" ${est?'data-line="-1" aria-label="前の行を今の位置に合わせる"':`data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す"`}>${ico('down',18)}</button></span>`:''}
     <span class="lfgrp"><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</span></div>`;
 }
 // 歌詞だけ(全画面)のときに歌詞バーに出す、前後の曲・再生と、下の段と同じ「歌詞」ボタン(下の段が隠れるため。押すと写真に戻る)
@@ -1806,7 +1807,7 @@ const ACT={
       const m=lyrMain(s,c.data.lyrics),L=m.lines.filter(l=>l.text),now=st.pos*1000,ci=bsearch(L,now+lyrOffset(s.id)),t=L[Math.max(0,Math.min(L.length-1,ci+(+d.line)))];
       if(t)v=Math.round(t.start-now+30);}
     v=Math.max(-300000,Math.min(300000,v));tmpOff={id:s.id,ms:v-saved};
-    const o=$('#lyroff');if(o)o.textContent=offLabel(v);lyrPrevKey=null;},
+    const o=$('#lyroff');if(o)o.textContent=offBarLabel(v);lyrPrevKey=null;},
   shufMode:()=>{
     st.shuf=!st.shuf;const c=cur().id;
     if(st.shuf){st.orig=st.q.slice();const rest=st.q.filter((_,i)=>i!==st.qi);st.q=[c,...shuffle(rest)];st.qi=0;}
@@ -1917,7 +1918,7 @@ document.addEventListener('input',e=>{
   if(t.dataset&&props){if(t.dataset.f)props.df[t.dataset.f]=t.value;if(t.dataset.tk)props.dt[t.dataset.tk]=t.value;if(t.dataset.nk!=null)props.nk[t.dataset.nk]=t.value;}
   if(t.dataset&&t.dataset.rng){st.set[t.dataset.rng]=+t.value;t.nextElementSibling.textContent=t.value+t.dataset.u;saveSettings();}
 });
-/* タイミング調整のエリアを長押し、または「ずれなし」の表示を 3 回続けて押すと、歌詞のタイミングの編集へ */
+/* タイミング調整のエリアを長押し、または真ん中の「歌詞調整」の表示を 3 回続けて押すと、歌詞のタイミングの編集へ */
 {let n=0,at=0;
   document.addEventListener('click',e=>{if(!e.target.closest('.lyrbar:not(.ted) .offc output'))return;
     const t=performance.now();n=t-at<500?n+1:1;at=t;if(n>=3){n=0;if(navigator.vibrate)navigator.vibrate(30);tedSheet();}});}
