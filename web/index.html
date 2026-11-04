@@ -2402,7 +2402,7 @@ async function fillExtra(sub){
   try{
     if(sub==='play'){
       const l=await api('/api/loudness');run=l.running;
-      html=`<div class="group">音量の測定</div><div class="panel"><div class="prow" style="flex-wrap:wrap"><span class="tt" style="min-width:200px"><b>${l.measured.toLocaleString()} / ${l.tracks.toLocaleString()} 曲を測定済み</b><small>${run?`測定中(${l.done.toLocaleString()} / ${l.total.toLocaleString()})`:'聴く曲はその都度測ります。まとめて測ると NAS で 1 曲ずつ、低い優先度で進めます(全曲では数十時間かかることがあります)'}</small></span>
+      html=`<div class="group">音量の測定</div><div class="panel"><div class="prow" style="flex-wrap:wrap"><span class="tt" style="min-width:200px"><b>${l.measured.toLocaleString()} / ${l.tracks.toLocaleString()} 曲を測定済み</b><small>${run?`測定中(${l.done.toLocaleString()} / ${l.total.toLocaleString()})`:'聴く曲はその都度測ります。まとめて測ると NAS で 1 曲ずつ、低い優先度で進めます(全曲では半日ほどかかります)'}</small></span>
         ${run?`<button class="btn ghost sm" data-act="loudStop">止める</button>`:`<button class="btn sm" data-act="loudStart">まとめて測る</button>`}</div></div>`;
     }else{
       const w=await api('/api/webinfo');
