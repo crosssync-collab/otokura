@@ -318,7 +318,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xbot button.on{color:var(--pri)}
 /* 再生中画面: 縦はそのまま並べる。横並び(.wide)はスマホの横向きのとき、または向きのボタンで「横」を選んだとき(PC でも) */
 .xl,.xr{display:contents}
-.lfbtn,.lfplay,.lfinfo{display:none!important}
+.lfbtn,.lfplay,.lfinfo,.lfseek{display:none!important}
 .xp.wide .in{max-width:1500px;height:100%;min-height:0;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:0 28px;
   padding:8px max(20px,env(safe-area-inset-right,0px)) 8px max(20px,env(safe-area-inset-left,0px))}
 .xp.wide .xtop{grid-column:2;grid-row:1;width:100%;max-width:680px;justify-self:center}
@@ -339,6 +339,11 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .lfinfo b{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lfinfo small{display:block;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .xp.wide.lyrfull .lyrbar>.chip{display:none}
+.xp.wide.lyrfull .lfseek{display:flex!important;align-items:center;gap:10px;padding:0 4px 2px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;filter:drop-shadow(0 0 3px var(--bg))}
+.lftrack{position:relative;flex:1;height:22px;cursor:pointer;touch-action:none}
+.lftrack::before{content:"";position:absolute;left:0;right:0;top:50%;height:4px;margin-top:-2px;border-radius:2px;background:color-mix(in srgb,var(--text) 22%,transparent)}
+.lftrack i{position:absolute;left:0;top:50%;height:4px;margin-top:-2px;border-radius:2px;background:var(--pri);width:0}
+.lftrack b{position:absolute;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--pri);left:0;box-shadow:0 1px 3px rgba(0,0,0,.3)}
 .xp.wide.lyrfull .in{grid-template-columns:minmax(0,1fr)}
 .xp.wide.lyrfull .xtop,.xp.wide.lyrfull .xr{display:none}
 .xp.wide.lyrfull .xl:has(.lyrwrap){width:auto}
@@ -1074,7 +1079,10 @@ function updatePreview(s,t){
   const a=ai>=0?L[ai].text:(ci<0?'♪':'♪ ♪ ♪'),b=L[ci+1]?L[ci+1].text:'';
   el.hidden=false;el.innerHTML=`<small>歌詞</small><span class="a">${esc(a)}</span><span class="b">${esc(b)}</span>`;
 }
-function lyrBar(s){
+function lyrBar(s){return lyrBarIn(s)+lyrSeek(s);}
+// 全画面の歌詞のときだけ見える、曲の進み具合の線(タッチ・クリック・ドラッグで移動)
+const lyrSeek=s=>`<div class="lfseek"><span class="lft" id="lfcur">${fmtT(st.pos)}</span><div class="lftrack" id="lftrack" role="slider" tabindex="0" aria-label="再生位置" aria-valuemin="0" aria-valuemax="${s.d}"><i id="lff"></i><b id="lfk"></b></div><span class="lft">${fmtT(s.d)}</span></div>`;
+function lyrBarIn(s){
   const c=lyrCache.get(s.id),d=c&&c.data,ly=d&&d.lyrics;
   const info=`<span class="lfinfo"><b>${esc(s.t)}</b><small>${esc(s.ar||alOf(s).a)}</small></span>`;   // 全画面の歌詞のときだけ見える
   if(!ly||!ly.layers||!ly.layers.length||ly.instrumental)return `<div class="lyrbar">${info}<span class="sp"></span><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
@@ -1268,6 +1276,7 @@ function updateProg(){
   const l=$('#lnf');if(l)l.style.width=(p*100)+'%';
   if(w)w.setAttribute('aria-valuenow',Math.round(st.pos));
   const t=$('#tcur');if(t)t.textContent=fmtT(st.pos);
+  const lf=$('#lff');if(lf){lf.style.width=(p*100)+'%';$('#lfk').style.left=(p*100)+'%';$('#lfcur').textContent=fmtT(st.pos);$('#lftrack').setAttribute('aria-valuenow',Math.round(st.pos));}
 }
 function markPlaying(){
   const s=cur();if(!s)return;
@@ -1726,7 +1735,7 @@ document.addEventListener('input',e=>{
 });
 /* 波形のシーク */
 document.addEventListener('pointerdown',e=>{
-  const w=e.target.closest('#wave');if(!w)return;
+  const w=e.target.closest('#wave,#lftrack');if(!w)return;
   const seek=ev=>{const r=w.getBoundingClientRect();st.pos=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width))*cur().d;updateProg();};
   seek(e);
   const mv=ev=>seek(ev),up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);};
