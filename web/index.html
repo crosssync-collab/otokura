@@ -824,7 +824,7 @@ const SETS={
     ['seg','np_lyrsize','文字の大きさ','',[['小','小'],['中','中'],['大','大']]],
     ['sw','np_lyrblur','歌い終えた行をぼかす','いま歌っている行が目立ちます'],
     ['sw','np_lyrprev','カバーの下に歌詞を表示','再生中画面で、いまの行と次の行を表示します'],
-    ['sw','np_lyrest','時刻の無い歌詞も流して表示','曲の長さと行の長さから時刻を推定します。前奏・間奏の長さは分からないので、ずれたら ↑↓(1 行ずつ)で合わせてください'],
+    ['sw','np_lyrest','時刻の無い歌詞も流して表示','曲の長さと行の長さから時刻を推定します。ずれたら、歌に合わせて ↓ を押すと行ごとの時刻を記録できます'],
     ['sw','np_lyrfetch','歌詞が無い曲は LRCLIB から探す','手元のファイルとタグに歌詞が無い曲だけ問い合わせます。音楽ファイルは書き換えません']]},
   mix:{title:'ミックス',icon:'mix',desc:'ミックスの長さと選び方',items:[
     ['rng','mixSize','ミックスの曲数','',[5,100,5,'曲']],
@@ -988,10 +988,48 @@ function estimateTimes(main,durMs){
   return {...main,synced:true,estimated:true,lines};
 }
 // 表示に使う歌詞(main)。時刻が無く、推定が有効なら推定した時刻つきを返す
-const lyrMain=(s,ly)=>{const m=ly&&ly.layers&&ly.layers.find(l=>l.kind==='main');
+const lyrMain=(s,ly)=>{if(rec&&rec.id===s.id)return rec.main;
+  const m=ly&&ly.layers&&ly.layers.find(l=>l.kind==='main');
   if(!m||m.synced||!st.set.np_lyrest||!m.lines.some(l=>l.text))return m;
   if(!m._est||m._est.d!==s.d)m._est={d:s.d,v:estimateTimes(m,s.d*1000)};
   return m._est.v;};
+// 行ごとのタイミングの記録: 歌に合わせて ↓ を押した時刻を、次の行の始まりにする。記録中は押すまで次の行へ進まない。
+// ↑ は 1 行戻す(最後に押した時刻を 1 つ前の行のものにする)。押すたびに少し待って「手動登録」の LRC として保存し、
+// まだ押していない行は、最後に押した行から曲の終わりまでに元の間隔を伸び縮みさせて埋める
+let rec=null;   // {id, src:元の行, t:各行の始まり(ms)か null, k:今の行, main:表示用}
+function recStart(s,c){
+  const m=lyrMain(s,c.data.lyrics);if(!m||!m.synced)return null;
+  const L=m.lines.filter(l=>l.text),off=c.data.offsetMs||0,ci=bsearch(L,st.pos*1000+off);
+  rec={id:s.id,src:L,t:L.map((l,i)=>i<=ci?Math.max(0,l.start-off):null),k:ci};
+  if(off){c.data.offsetMs=0;lyrRequest(s.id,'PUT','/offset',{offsetMs:0}).catch(()=>{});}   // ずれは記録した時刻に含める
+  rec.main=recMain(rec);rec.v=0;return rec;
+}
+function recMain(r){
+  const FAR=1e12;
+  const lines=r.src.map((l,i)=>{const t=r.t[i];if(t==null)return {start:FAR,end:FAR,text:l.text};
+    const nx=r.t[i+1]!=null?r.t[i+1]:FAR-1;   // 今の行は次を押すまで光らせたまま
+    return {start:t,end:i<r.k?Math.min(nx,t+Math.max(3000,(l.end-l.start)*1.5)):nx,text:l.text};});
+  return {kind:'main',synced:true,rec:true,lines};
+}
+function recStep(d){
+  const r=rec,now=Math.round(st.pos*1000),N=r.src.length;
+  if(d>0){
+    while(r.k>=0&&r.t[r.k]>now){r.t[r.k]=null;r.k--;}   // 巻き戻して押したら、そこから記録し直す
+    if(r.k>=N-1)return;r.k++;r.t[r.k]=now;
+  }else{if(r.k<0)return;const at=r.t[r.k];r.t[r.k]=null;r.k--;if(r.k>=0)r.t[r.k]=at;}
+  r.main=recMain(r);r.v++;clearTimeout(r.timer);
+  if(r.k>=N-1){rec=null;recSave(r,'行ごとのタイミングを記録しました');}
+  else r.timer=setTimeout(()=>recSave(r),1500);
+  lyrPrevKey=null;renderXP();
+}
+function recEnd(){const r=rec;rec=null;if(r){clearTimeout(r.timer);recSave(r);}}
+function recSave(r,msg){
+  const L=r.src,N=L.length,k=r.k,t=r.t.slice();if(k<0)return;
+  if(k<N-1){const a=t[k],a0=L[k].start,end=Math.max(a+N*1000,(SONGS[r.id].d||0)*1000-5000),sc=(end-a)/Math.max(1,L[N-1].end-a0);
+    for(let i=k+1;i<N;i++)t[i]=Math.max(t[i-1]+100,Math.round(a+(L[i].start-a0)*sc));}
+  const f=ms=>`[${String(Math.floor(ms/60000)).padStart(2,'0')}:${(ms%60000/1000).toFixed(2).padStart(5,'0')}]`;
+  return lyrSave(r.id,'PUT','',{text:t.map((ms,i)=>f(ms)+L[i].text).join('\n')},msg);
+}
 function lyrEmpty(html){const r=document.createElement('div');r.innerHTML=`<div class="lyrempty">${html}</div>`;return {root:r,synced:false};}
 function buildLyrics(s,c,key){
   const d=c.data,ly=d&&d.lyrics,main=lyrMain(s,ly);
@@ -1043,7 +1081,7 @@ function buildSynced(main){
 function mountLyrics(){
   const slot=$('#lyrslot'),s=cur();if(!slot||!s)return;
   const c=lyrCache.get(s.id)||{state:'loading',v:0};
-  const key=`${s.id}:${c.v||0}:${st.set.np_lyrsize}:${st.set.np_lyrblur}:${st.set.np_lyrest}`;
+  const key=`${s.id}:${c.v||0}:${st.set.np_lyrsize}:${st.set.np_lyrblur}:${st.set.np_lyrest}:${rec&&rec.id===s.id?rec.v:'-'}`;
   if(!lyrDom||lyrDom.key!==key)lyrDom=buildLyrics(s,c,key);
   slot.appendChild(lyrDom.root);
   if(lyrDom.synced){lyrDom.cur=-2;lyrDom.active=-2;lyrDom.target=null;lyrDom.userAt=-1e9;syncLyrics(lyrNow(s),true);}
@@ -1091,14 +1129,15 @@ const offLabel=v=>v?`${(Math.abs(v)/1000).toFixed(1)}秒${v>0?'早く':'遅く'}
 function lyrBarIn(s){
   const c=lyrCache.get(s.id),d=c&&c.data,ly=d&&d.lyrics;
   const has=ly&&ly.layers&&ly.layers.length&&!ly.instrumental;
-  const est=has&&(lyrMain(s,ly)||{}).estimated,step=est?1000:100;
-  const sync=has?(ly.hasWords?'語ごと':ly.synced?'行ごと':est?'時刻は推定':'同期なし'):'';
+  const recOn=!!(rec&&rec.id===s.id),est=has&&!recOn&&(lyrMain(s,ly)||{}).estimated,step=100;
+  const sync=has?(recOn?'タイミング記録中':ly.hasWords?'語ごと':ly.synced?'行ごと':est?'時刻は推定':'同期なし'):'';
   // 全画面の歌詞のときだけ見える曲名・アーティスト(隣に歌詞の出どころの札が並ぶ)
   const info=`<span class="lfinfo"><b>${esc(s.t)}</b><small>${esc(s.ar||alOf(s).a)}</small></span>`;
   if(!has)return `<div class="lyrbar">${info}<span class="sp"></span><span class="lfgrp"><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</span></div>`;
   const off=d.offsetMs||0;
-  return `<div class="lyrbar">${info}<span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。ずれたら ↑↓ で合わせてください':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
-    ${ly.synced||est?`<span class="offc" title="${est?'歌詞のずれの補正: ↑で次の行、↓で前の行を今の位置に合わせる':'歌詞のずれの補正: ↑で歌詞を早く、↓で遅く出す'}"><button data-act="lyrOff" ${est?'data-line="1" aria-label="次の行を今の位置に合わせる"':`data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す"`}>${ico('up',18)}</button><output id="lyroff">${offLabel(off)}</output><button data-act="lyrOff" ${est?'data-line="-1" aria-label="前の行を今の位置に合わせる"':`data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す"`}>${ico('down',18)}</button></span>`:''}
+  return `<div class="lyrbar">${info}<span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。歌に合わせて ↓ を押すと、行ごとの時刻を記録します':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
+    ${recOn||est?`<span class="offc" title="歌っている行が変わったら ↓ を押すと、その時刻を次の行の始まりとして記録します。↑ は 1 行戻します。記録中は押すまで次の行へ進みません"><button data-act="lyrRec" data-d="-1" aria-label="1 行戻す">${ico('up',18)}</button><output id="lyroff">${recOn?`${rec.k+1} / ${rec.src.length}`:'↓で記録'}</output><button data-act="lyrRec" data-d="1" aria-label="次の行が今始まった">${ico('down',18)}</button></span>`
+      :ly.synced?`<span class="offc" title="歌詞のずれの補正: ↑で歌詞を早く、↓で遅く出す"><button data-act="lyrOff" data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す">${ico('up',18)}</button><output id="lyroff">${offLabel(off)}</output><button data-act="lyrOff" data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す">${ico('down',18)}</button></span>`:''}
     <span class="lfgrp"><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</span></div>`;
 }
 // 歌詞だけ(全画面)のときに歌詞バーに出す、前後の曲・再生と、下の段と同じ「歌詞」ボタン(下の段が隠れるため。押すと写真に戻る)
@@ -1108,6 +1147,7 @@ const lyrFullBtns=()=>`<button class="ib sm lfplay" data-act="prev" aria-label="
   +`<button class="ib sm lfbtn on" data-act="lyrToggle" aria-label="歌詞(押すと写真に戻る)" title="歌詞(押すと写真に戻る)">${ico('lyrics',20)}</button>`;
 function lyrFrame(){
   requestAnimationFrame(lyrFrame);
+  if(rec&&(!cur()||cur().id!==rec.id))recEnd();
   if(!st.xp)return;const s=cur();if(!s)return;
   const t=lyrNow(s);
   if(st.lyr){if(lyrDom&&lyrDom.synced&&lyrDom.id===s.id&&lyrDom.box.isConnected)syncLyrics(t,false);}
@@ -1122,6 +1162,7 @@ function lyrMenuSheet(){
     +(d&&d.canFetch?mi('lyrFetch','search','LRCLIB で探し直す'):'')
     +mi('lyrPaste','add','歌詞を貼り付ける')
     +mi('lyrFile','folder','ファイルから読み込む(.lrc / .ttml / .txt)')
+    +(ly&&!ly.hasWords&&(lyrMain(s,ly)||{}).synced&&!(rec&&rec.id===s.id)?mi('lyrRecStart','lyrics','行ごとのタイミングを記録し直す'):'')
     +(ly&&ly.source==='manual'?mi('lyrClear','close','手動で登録した歌詞を削除'):'')
     +`<input type="file" id="lyrfile" accept=".lrc,.ttml,.xml,.txt,text/plain" hidden>`);
 }
@@ -1628,11 +1669,12 @@ const ACT={
   lyrFile:()=>{const i=$('#lyrfile');if(!i)return;i.onchange=async()=>{const f=i.files[0];if(!f)return;if(f.size>2e6){toast('ファイルが大きすぎます');return;}
     const t=await readTextFile(f);closeSheet();lyrSave(cur().id,'PUT','',{text:t},`${f.name} を読み込みました`);};i.click();},
   lyrClear:()=>{closeSheet();lyrSave(cur().id,'DELETE','/manual',undefined,'手動で登録した歌詞を削除しました');},
+  lyrRec:d=>{const s=cur(),c=lyrCache.get(s.id);if(!c||!c.data)return;
+    if(!(rec&&rec.id===s.id)&&!recStart(s,c))return;recStep(+d.d);},
+  lyrRecStart:()=>{const s=cur(),c=lyrCache.get(s.id);closeSheet();if(!c||!c.data||!recStart(s,c))return;
+    toast('歌っている行が変わったら ↓ を押してください');lyrPrevKey=null;renderXP();},
   lyrOff:d=>{const s=cur(),c=lyrCache.get(s.id);if(!c||!c.data)return;
     let v=(c.data.offsetMs||0)+(+d.d||0);
-    if(d.line){   // 時刻を推定した歌詞: 前後の行がちょうど今の位置に来るようにずらす
-      const m=lyrMain(s,c.data.lyrics),L=m.lines.filter(l=>l.text),now=st.pos*1000,ci=bsearch(L,now+(c.data.offsetMs||0)),t=L[Math.max(0,Math.min(L.length-1,ci+(+d.line)))];
-      if(t)v=Math.round(t.start-now+30);}
     v=Math.max(-300000,Math.min(300000,v));c.data.offsetMs=v;
     const o=$('#lyroff');if(o)o.textContent=offLabel(v);lyrPrevKey=null;
     clearTimeout(offTimer);const id=s.id;offTimer=setTimeout(()=>lyrRequest(id,'PUT','/offset',{offsetMs:v}).catch(()=>toast('ずれの補正を保存できませんでした')),600);},
