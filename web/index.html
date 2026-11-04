@@ -270,6 +270,9 @@ button.chip[aria-pressed="true"],button.chip[aria-selected="true"]{background:va
 .ll:not(.now) .bgv{opacity:.7}
 .gap{display:flex;gap:9px;align-items:center;height:0;overflow:hidden;padding:0 12px;transition:height .35s,margin .35s}
 .gap.on{height:46px;margin:4px 0}
+.gap.blank{height:calc(var(--fs,28px)*.6)}   /* 段落の区切り: 待機中でなくても空きを残す */
+.gap.blank.on{height:46px}
+.gap.blank:not(.on) i{visibility:hidden}
 .gap i{--p:0;width:11px;height:11px;border-radius:50%;background:var(--text);opacity:calc(.22 + var(--p)*.78);transform:scale(calc(.75 + var(--p)*.35));transition:opacity .2s,transform .2s}
 .gap.on{animation:breathe 2.4s ease-in-out infinite}
 @keyframes breathe{50%{transform:scale(1.08)}}
@@ -999,7 +1002,7 @@ function estimateTimes(main,durMs){
   const t0=Math.min(25000,Math.max(8000,durMs*.08)),t1=durMs-Math.min(20000,Math.max(5000,durMs*.06));
   const span=Math.max(1000,t1-t0),total=items.reduce((a,x)=>a+x.w,0)||1;
   let t=t0;const lines=[];
-  items.forEach(x=>{const d=span*x.w/total;if(!x.gap)lines.push({start:Math.round(t),end:Math.round(t+d*.92),text:x.text});t+=d;});
+  items.forEach(x=>{const d=span*x.w/total;lines.push(x.gap?{start:Math.round(t),end:Math.round(t+d),text:''}:{start:Math.round(t),end:Math.round(t+d*.92),text:x.text});t+=d;});
   return {...main,synced:true,estimated:true,lines};
 }
 // 表示に使う歌詞(main)。時刻が無く、推定が有効なら推定した時刻つきを返す
@@ -1017,7 +1020,9 @@ let ted=null,tmpOff=null;   // tmpOff={id,ms}: その場だけの調整。曲が
 const FAR=1e12;
 const tedDraftKey=s=>'otokura.lyrdraft.'+(s.dbid||s.id);
 function tedDraft(s,n){try{const d=JSON.parse(localStorage.getItem(tedDraftKey(s)));return d&&d.n===n&&d.k>=0?d:null;}catch(e){return null;}}
-function tedLines(s,c){const m=lyrMain(s,c.data.lyrics);return m&&m.lines.some(l=>l.text)?m.lines.filter(l=>l.text):null;}
+function tedLines(s,c){const m=lyrMain(s,c.data.lyrics);if(!m||!m.lines.some(l=>l.text))return null;
+  const L=m.lines.filter((l,i,a)=>l.text||(a[i-1]&&a[i-1].text));while(L.length&&!L[L.length-1].text)L.pop();   // 先頭・末尾・連続の区切りは外す
+  return L;}
 function tedEnter(kind,resume){
   const s=cur(),c=lyrCache.get(s.id);closeSheet();if(!c||!c.data)return;
   const L=tedLines(s,c);if(!L){toast('この曲の歌詞はありません');return;}
@@ -1095,22 +1100,27 @@ function buildLyrics(s,c,key){
   }else o=buildSynced(main);
   o.id=s.id;o.key=key;return o;
 }
+// 空の行(段落の区切り)は、次の行までの「待機の行」として間奏と同じ ・・・ で出す(長さ 0 なら空きだけ)
 function buildSynced(main){
-  const L=main.lines.filter(l=>l.text||(l.bg&&l.bg.length)),agents=main.agents||[];
+  const sung=l=>!!(l&&(l.text||(l.bg&&l.bg.length)));
+  const A=main.lines.filter((l,i,a)=>sung(l)||(i>0&&i<a.length-1)),agents=main.agents||[];
+  const L=A.filter(sung);
   const ids=[...new Set(L.map(l=>l.agent).filter(Boolean))];
   const right=a=>ids.length>1&&a&&a!=='v1'&&a!=='v1000'&&(agents.find(x=>x.id===a)||{}).role!=='main';
   const wspan=w=>`<span class="w${w.end-w.start>=1200?' long':''}">${esc(w.text)}</span>`;
   const gaps=[];let html='';
-  const gapHtml=(s,e)=>{gaps.push({s,e});return `<div class="gap" data-gi="${gaps.length-1}" aria-hidden="true"><i></i><i></i><i></i></div>`;};
+  const gapHtml=(s,e,blank)=>{gaps.push({s,e});return `<div class="gap${blank?' blank':''}" data-gi="${gaps.length-1}" aria-hidden="true"><i></i><i></i><i></i></div>`;};
   if(L.length&&L[0].start>=5000)html+=gapHtml(0,L[0].start);
-  let prevAgent=null;
-  L.forEach((l,i)=>{
+  let prevAgent=null,i=-1;
+  A.forEach((l,ai)=>{
+    if(!sung(l)){if(sung(A[ai-1])&&sung(A[ai+1]))html+=gapHtml(l.start,l.end,true);return;}
+    i++;
     const ag=agents.find(a=>a.id===l.agent);
     const who=ag&&ag.name&&l.agent!==prevAgent?`<span class="who">${esc(ag.name)}</span>`:'';prevAgent=l.agent;
     const body=l.words&&l.words.length?l.words.map(wspan).join(''):esc(l.text);
     const bg=l.bg&&l.bg.length?`<span class="bgv">${l.bg.map(wspan).join('')}</span>`:'';
     html+=`<div class="ll${right(l.agent)?' right':''}" data-act="lyrSeek" data-ms="${l.start}" data-li="${i}">${who}${body}${bg}</div>`;
-    const nx=L[i+1];if(nx&&nx.start-l.end>=5000)html+=gapHtml(l.end,nx.start);
+    const nx=A[ai+1];if(sung(nx)&&nx.start-l.end>=5000)html+=gapHtml(l.end,nx.start);
   });
   const r=document.createElement('div');
   const fs={小:'s',中:'m',大:'l'}[st.set.np_lyrsize]||'m';
@@ -1176,7 +1186,7 @@ function lyrBar(s){return (ted&&ted.id===s.id?tedBar(s):lyrBarIn(s))+lyrSeek(s);
 function tedBar(s){
   const r=ted,b=(act,icon,label,cls='',attrs='')=>`<button class="tedb ${cls}" data-act="${act}" ${attrs}>${ico(icon,22)}<span>${label}</span></button>`;
   const play=b('toggle',st.playing?'pause':'play',st.playing?'一時停止':'再生');
-  const head=`<div class="tedhead"><span class="tedtag">${ico('edit',16)}${r.kind==='off'?`出だしの位置を調整中 ・ ${offLabel(r.v)}`:`行ごとに記録中 ・ ${r.k+1} / ${r.src.length} 行`}</span>
+  const head=`<div class="tedhead"><span class="tedtag">${ico('edit',16)}${r.kind==='off'?`出だしの位置を調整中 ・ ${offLabel(r.v)}`:`行ごとに記録中 ・ ${r.k+1} / ${r.src.length} 行${r.k>=0&&!r.src[r.k].text?'(待機)':''}`}</span>
     <span class="sp"></span><button class="btn ghost sm" data-act="tedCancel">やめる</button><button class="btn sm" data-act="tedSave">${ico('check',18)}保存</button></div>`;
   const est=r.kind==='off'&&(lyrMain(s,lyrCache.get(s.id).data.lyrics)||{}).estimated;
   const row=r.kind==='off'

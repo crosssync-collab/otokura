@@ -58,8 +58,11 @@ class TrackRef:
     duration_ms: int | None = None
 
 
+PARSER_VERSION = 2   # 読み方を変えたら上げる(手元の歌詞を読み直す)。2: 段落の区切りを残す
+
+
 def _signature(audio: Path, folder_files: list[Path] = ()) -> str:
-    parts = []
+    parts: list = [["parser", PARSER_VERSION]]
     for p in [audio, *sorted(find_sidecars(audio).values())]:
         try:
             parts.append([p.name, round(p.stat().st_mtime, 3)])

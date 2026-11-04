@@ -13,6 +13,13 @@ def test_basic_lrc_and_tags():
     assert m.lines[0].text == "一行目"
 
 
+def test_paragraph_breaks_kept():
+    # 時刻だけの行 = 待機の行(前の行の終わりから次の行まで)、時刻の無い空白行 = 長さ 0 の区切り。先頭・末尾・連続は入れない
+    ly = parse_lrc("[00:00.50]\n[00:01.00]A\n[00:03.00]\n[00:03.50]\n[00:08.00]B\n\n\n[00:10.00]C\n[00:12.00]\n", track_ms=20000)
+    assert [(l.text, l.start, l.end) for l in ly.main.lines] == [
+        ("A", 1000, 3000), ("", 3000, 8000), ("B", 8000, 10000), ("", 10000, 10000), ("C", 10000, 12000)]
+
+
 def test_time_variants():
     ly = parse_lrc("[1:02]a\n[01:03.5]b\n[01:04:20]c\n[01:05.005]d")
     assert [l.start for l in ly.main.lines] == [62000, 63500, 64200, 65005]
@@ -31,8 +38,9 @@ def test_offset_positive_shows_earlier():
 
 def test_blank_line_marks_end_for_interlude():
     ly = parse_lrc("[00:10.00]歌\n[00:14.00]\n[00:40.00]また歌")
-    a, b = ly.main.lines
+    a, gap, b = ly.main.lines
     assert (a.start, a.end) == (10000, 14000)
+    assert (gap.text, gap.start, gap.end) == ("", 14000, 40000)
     assert b.start == 40000
 
 

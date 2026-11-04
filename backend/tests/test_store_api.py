@@ -155,7 +155,8 @@ def test_manual_keeps_previous_version(env):
     r = c.put("/api/tracks/3/lyrics", json={"text": "[00:01.00]一行目\n[00:05.00]\n[00:09.00]二行目", "offsetMs": 0}).json()
     assert r["hasPrev"] and r["offsetMs"] == 0 and r["lyrics"]["synced"]
     ln = r["lyrics"]["layers"][0]["lines"]
-    assert [x["text"] for x in ln] == ["一行目", "二行目"] and ln[0]["end"] == 5000   # 空の行で前の行が終わる(間奏)
+    assert [x["text"] for x in ln] == ["一行目", "", "二行目"] and ln[0]["end"] == 5000   # 空の行で前の行が終わる(間奏)
+    assert (ln[1]["start"], ln[1]["end"]) == (5000, 9000)                                   # 次の行までの待機の行
     r = c.post("/api/tracks/3/lyrics/restore").json()
     assert not r["hasPrev"] and r["offsetMs"] == 1500 and not r["lyrics"]["synced"]
     # 削除も取り消せる

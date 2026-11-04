@@ -7,6 +7,8 @@
 - 歌い手の印: 行頭の "v1:" "v2:"(Apple 由来の eLRC)と "M:" "F:" "D:"(Walaoke)
 - バックボーカル: 直前の行に続く "[bg: <..>語 <..>語]" 行
 - 同じ時刻が 2 行続く形式は、2 行目を訳(translation レイヤー)として扱う
+- 空の行(時刻だけの行・時刻の無い空白行)は、段落の区切り(text が空の行)として残す。
+  時刻だけの行は前の行の終わりで、次の行までの「待機の行」になる。時刻の無い空白行は長さ 0 の区切り
 """
 from __future__ import annotations
 
@@ -84,10 +86,13 @@ def parse_lrc(text: str, source: str = "sidecar:lrc", track_ms: int | None = Non
     plain: list[str] = []
     order = 0
     last_line: Line | None = None
+    gap_before: set[int] = set()   # 前に時刻の無い空白行がある行(id)
+    blank = False
 
     for l in raw:
         s = l.strip()
         if not s:
+            blank = True
             continue
         bg = BG_LINE.match(s)
         if bg and last_line is not None:
@@ -122,6 +127,9 @@ def parse_lrc(text: str, source: str = "sidecar:lrc", track_ms: int | None = Non
             entries.append((ln.start, order, ln))
             order += 1
             last_line = ln
+            if blank and body_text:
+                gap_before.add(id(ln))
+        blank = False
 
     if not entries:
         lines = [Line(start=None, end=None, text=t) for t in plain]
@@ -157,7 +165,25 @@ def parse_lrc(text: str, source: str = "sidecar:lrc", track_ms: int | None = Non
     elif trans:   # 訳と言えるほど無い → 本文に戻す
         nonempty.extend(trans)
         nonempty.sort(key=lambda x: x.start)
+    layers[0].lines = _with_breaks(main, nonempty, gap_before)
     return Lyrics(source=source, layers=layers)
+
+
+def _with_breaks(main: list[Line], nonempty: list[Line], gap_before: set[int]) -> list[Line]:
+    """本文の行の間に、段落の区切り(text が空の行)を入れる。先頭・末尾・連続の区切りは入れない。"""
+    timed_blank = sorted(ln.start for ln in main if not ln.text)
+    out: list[Line] = []
+    bi = 0
+    for ln in nonempty:
+        while bi < len(timed_blank) and timed_blank[bi] < ln.start:
+            t = timed_blank[bi]
+            bi += 1
+            if out and out[-1].text and t >= out[-1].start:
+                out.append(Line(start=t, end=ln.start, text=""))
+        if out and out[-1].text and id(ln) in gap_before:
+            out.append(Line(start=ln.start, end=ln.start, text=""))
+        out.append(ln)
+    return out
 
 
 def parse_plain(text: str, source: str = "sidecar:txt") -> Lyrics:
