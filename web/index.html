@@ -281,7 +281,7 @@ button.chip[aria-pressed="true"],button.chip[aria-selected="true"]{background:va
 .lyrresume{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:none}
 .lyrresume.show{display:inline-flex}
 .lyrbar{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;min-width:0}
-.lyrbar .chip{overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+.lyrbar .chip{overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto;background:var(--s2);color:var(--muted)}   /* ずれの補正と同じ地の色 */
 .lyrbar .sp{flex:1}
 .offc{display:inline-flex;align-items:center;background:var(--s2);border-radius:17px;height:34px}
 .offc button{width:34px;height:34px;border-radius:50%;font-size:18px;line-height:1}
@@ -339,8 +339,12 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xp.wide.lyrfull .lfinfo{display:block!important;min-width:0;flex:0 1 auto;max-width:45%;line-height:1.3}
 .lfinfo b{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lfinfo small{display:block;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.xp.wide.lyrfull .lyrbar>.chip{display:none}
 .xp.wide.lyrfull .in{padding-bottom:14px}
+/* 全画面の歌詞バー: 曲名・歌詞の種類・ずれの補正・ボタン群を、画面の幅に均等に並べる */
+.lfgrp{display:contents}
+.xp.wide.lyrfull .lfgrp{display:flex;align-items:center;gap:4px;flex:none}
+.xp.wide.lyrfull .lyrbar{justify-content:space-between}
+.xp.wide.lyrfull .lyrbar>.sp{display:none}
 /* 進み具合の線: 時間は出さず、画面の下の縁に横いっぱい */
 .xp.wide.lyrfull .lfseek{display:block!important;position:fixed;left:0;right:0;bottom:env(safe-area-inset-bottom,0px);z-index:2}
 .lft{display:none}
@@ -1090,14 +1094,16 @@ const lyrSeek=s=>`<div class="lfseek"><span class="lft" id="lfcur">${fmtT(st.pos
 const offLabel=v=>v?`${(Math.abs(v)/1000).toFixed(1)}秒${v>0?'早く':'遅く'}`:'ずれなし';
 function lyrBarIn(s){
   const c=lyrCache.get(s.id),d=c&&c.data,ly=d&&d.lyrics;
-  const info=`<span class="lfinfo"><b>${esc(s.t)}</b><small>${esc(s.ar||alOf(s).a)}</small></span>`;   // 全画面の歌詞のときだけ見える
-  if(!ly||!ly.layers||!ly.layers.length||ly.instrumental)return `<div class="lyrbar">${info}<span class="sp"></span><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
-  const est=(lyrMain(s,ly)||{}).estimated,step=est?1000:100;
-  const sync=ly.hasWords?'語ごと':ly.synced?'行ごと':est?'時刻は推定':'同期なし';
+  const has=ly&&ly.layers&&ly.layers.length&&!ly.instrumental;
+  const est=has&&(lyrMain(s,ly)||{}).estimated,step=est?1000:100;
+  const sync=has?(ly.hasWords?'語ごと':ly.synced?'行ごと':est?'時刻は推定':'同期なし'):'';
+  // 全画面の歌詞のときだけ見える曲名・アーティスト(隣に歌詞の出どころの札が並ぶ)
+  const info=`<span class="lfinfo"><b>${esc(s.t)}</b><small>${esc(s.ar||alOf(s).a)}</small></span>`;
+  if(!has)return `<div class="lyrbar">${info}<span class="sp"></span><span class="lfgrp"><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</span></div>`;
   const off=d.offsetMs||0;
-  return `<div class="lyrbar">${info}<span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。ずれたら − ＋ で合わせてください':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
+  return `<div class="lyrbar">${info}<span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。ずれたら ↑↓ で合わせてください':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
     ${ly.synced||est?`<span class="offc" title="${est?'歌詞のずれの補正: ↑で次の行、↓で前の行を今の位置に合わせる':'歌詞のずれの補正: ↑で歌詞を早く、↓で遅く出す'}"><button data-act="lyrOff" ${est?'data-line="1" aria-label="次の行を今の位置に合わせる"':`data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す"`}>${ico('up',18)}</button><output id="lyroff">${offLabel(off)}</output><button data-act="lyrOff" ${est?'data-line="-1" aria-label="前の行を今の位置に合わせる"':`data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す"`}>${ico('down',18)}</button></span>`:''}
-    <button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
+    <span class="lfgrp"><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</span></div>`;
 }
 // 歌詞だけ(全画面)のときに歌詞バーに出す、前後の曲・再生と、下の段と同じ「歌詞」ボタン(下の段が隠れるため。押すと写真に戻る)
 const lyrFullBtns=()=>`<button class="ib sm lfplay" data-act="prev" aria-label="前の曲">${ico('prev',20)}</button>`
