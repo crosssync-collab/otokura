@@ -3,6 +3,8 @@
 - 文字コードは UTF-8(BOM あり・なし)、だめなら CP932(日本の取り込みに多い)
 - FILE の名前と実際のファイルは、拡張子が違っても(.wav と書いて .flac にした等)名前が同じなら結びつける
 - 曲は INDEX 01 から次の曲の INDEX 01 まで(最後の曲はファイルの終わりまで)。時刻は mm:ss:ff(1 秒 = 75 フレーム)
+- 曲ごとのファイルに付く EAC の「Noncompliant」形式(次の曲の INDEX 00 だけ前のファイルにあり、INDEX 01 は次の FILE の中)は、
+  INDEX 01 がある FILE の曲として数える。1 つの FILE に 2 曲以上ある場合だけ分ける
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ _TIME = re.compile(r"(\d+):(\d{1,2}):(\d{1,2})")
 class CueTrack:
     no: int
     title: str | None = None
+    has01: bool = False            # このファイルの中に INDEX 01 がある
     performer: str | None = None
     start_ms: int = 0
     end_ms: int | None = None      # None = ファイルの終わりまで
@@ -54,10 +57,15 @@ def parse(text: str, path: Path = Path("x.cue")) -> CueSheet:
         cmd = cmd.upper()
         if cmd == "FILE":
             m = re.match(r'\s*("([^"]*)"|(\S+))', rest)
+            prev = cur_file
             cur_file = (m.group(2) if m.group(2) is not None else m.group(3)) if m else None
             if cur_file is not None:
                 cs.files.setdefault(cur_file, [])
-            tr = None
+            if tr is not None and not tr.has01 and cur_file is not None and prev is not None:
+                cs.files[prev].remove(tr)           # INDEX 01 がまだ無い曲は、次のファイルの曲(Noncompliant 形式)
+                cs.files[cur_file].append(tr)
+            else:
+                tr = None
         elif cmd == "TRACK":
             parts = rest.split()
             if cur_file is None or not parts or not parts[0].isdigit():
@@ -75,6 +83,7 @@ def parse(text: str, path: Path = Path("x.cue")) -> CueSheet:
                 if m:
                     mm, ss, ff = (int(x) for x in m.groups())
                     tr.start_ms = mm * 60000 + ss * 1000 + round(ff * 1000 / 75)
+                    tr.has01 = True
         elif cmd == "TITLE":
             if tr is not None:
                 tr.title = _val(rest)
@@ -94,7 +103,8 @@ def parse(text: str, path: Path = Path("x.cue")) -> CueSheet:
                 cs.genre = _val(v)
             elif k == "DISCNUMBER" and _val(v).isdigit():
                 cs.disc = int(_val(v))
-    for tracks in cs.files.values():
+    for name in list(cs.files):
+        tracks = cs.files[name] = [t for t in cs.files[name] if t.has01]
         tracks.sort(key=lambda t: t.start_ms)
         for a, b in zip(tracks, tracks[1:]):
             a.end_ms = b.start_ms

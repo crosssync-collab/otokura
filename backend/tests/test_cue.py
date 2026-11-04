@@ -35,6 +35,27 @@ def test_parse():
     assert t[1].performer == "ゲスト" and t[0].performer is None
 
 
+def test_noncompliant_per_track_files_are_not_split():
+    # EAC の Noncompliant 形式: 次の曲の INDEX 00 だけ前のファイルにある(曲ごとのファイル)
+    text = """FILE "04 - A.flac" WAVE
+  TRACK 04 AUDIO
+    TITLE "A"
+    INDEX 01 00:00:00
+  TRACK 05 AUDIO
+    TITLE "B"
+    INDEX 00 03:58:10
+FILE "05 - B.flac" WAVE
+    INDEX 01 00:00:00
+  TRACK 06 AUDIO
+    TITLE "C"
+    INDEX 00 03:00:00
+FILE "06 - C.flac" WAVE
+    INDEX 01 00:00:00
+"""
+    cs = cue.parse(text)
+    assert {k: [t.no for t in v] for k, v in cs.files.items()} == {"04 - A.flac": [4], "05 - B.flac": [5], "06 - C.flac": [6]}
+
+
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg が必要")
 def test_scan_stream_and_edit(tmp_path):
     from mutagen.flac import FLAC
