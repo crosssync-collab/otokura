@@ -1080,7 +1080,6 @@ function tedCancel(){
 }
 function tedSheet(){
   const s=cur(),c=lyrCache.get(s.id),d=c&&c.data,ly=d&&d.lyrics;
-  if(s.local){toast('この端末の曲の歌詞は編集できません');return;}
   const L=d&&ly&&tedLines(s,c),m=L&&lyrMain(s,ly),dr=L&&tedDraft(s,L);
   const opt=(act,icon,b,sm,attrs='')=>`<button class="mi" data-act="${act}" ${attrs}>${ico(icon,22)}<span><b>${b}</b><small>${sm}</small></span></button>`;
   openSheet('ted','歌詞のタイミングを編集',!L?`<p class="muted" style="margin:4px 14px 12px">この曲の歌詞はありません</p>`
@@ -1241,8 +1240,8 @@ function lyrMenuSheet(){
     +(d&&d.canFetch?mi('lyrFetch','search','LRCLIB で探し直す'):'')
     +mi('lyrPaste','add','歌詞を貼り付ける')
     +mi('lyrFile','folder','ファイルから読み込む(.lrc / .ttml / .txt)')
-    +(!s.local&&ly&&!ly.instrumental?mi('tedSheet','edit','タイミングを編集(タイミング調整の長押し・3 回押しでも開けます)'):'')
-    +(d&&d.hasPrev&&!s.local?mi('tedRestore','back','記録・登録する前の歌詞に戻す'):'')
+    +(ly&&!ly.instrumental?mi('tedSheet','edit','タイミングを編集(タイミング調整の長押し・3 回押しでも開けます)'):'')
+    +(d&&d.hasPrev?mi('tedRestore','back','記録・登録する前の歌詞に戻す'):'')
     +(ly&&ly.source==='manual'?mi('lyrClear','close','手動で登録した歌詞を削除'):'')
 );
 }
@@ -2139,8 +2138,8 @@ if(LIVE&&window.isSecureContext&&/Chrome\//.test(navigator.userAgent)){
 const LOCAL_EXT={flac:'FLAC',mp3:'MP3',m4a:'AAC',aac:'AAC',mp4:'AAC',ogg:'Vorbis',oga:'Vorbis',opus:'Opus',wav:'WAV'};
 const LOCAL_MIME={FLAC:'audio/flac',MP3:'audio/mpeg',AAC:'audio/mp4',Vorbis:'audio/ogg',Opus:'audio/ogg; codecs=opus',WAV:'audio/wav'};
 const LDB={db:null,
-  open(){return this.db||(this.db=new Promise((ok,ng)=>{const r=indexedDB.open('otokura-local',1);
-    r.onupgradeneeded=()=>{const d=r.result;['sources','tracks','art','files'].forEach(n=>d.createObjectStore(n,{keyPath:n==='art'?'key':'id'}));};
+  open(){return this.db||(this.db=new Promise((ok,ng)=>{const r=indexedDB.open('otokura-local',2);   // 2: 歌詞(lyrics)を追加
+    r.onupgradeneeded=()=>{const d=r.result;['sources','tracks','art','files','lyrics'].forEach(n=>{if(!d.objectStoreNames.contains(n))d.createObjectStore(n,{keyPath:n==='art'?'key':'id'});});};
     r.onsuccess=()=>ok(r.result);r.onerror=()=>ng(r.error);}));},
   async run(store,mode,fn){const d=await this.open();return new Promise((ok,ng)=>{const t=d.transaction(store,mode),r=fn(t.objectStore(store));
     t.oncomplete=()=>ok(r&&r.result);t.onerror=()=>ng(t.error);t.onabort=()=>ng(t.error);});},
@@ -2269,10 +2268,17 @@ async function localFile(s){
   catch(e){throw new Error('ファイルが見つかりません。メディアプロバイダで読み直してください');}
 }
 const localOffsets=(()=>{try{return JSON.parse(localStorage.getItem('otokura.localOffsets')||'{}');}catch(e){return {};}})();
+// この端末の曲の歌詞: タグの歌詞に、読み込んだ・記録した歌詞(手動登録)をこの端末のブラウザに保存して重ねる。前の版を 1 つ残す
 async function localLyrics(s,method,path,body){
-  if(method==='PUT'&&path==='/offset'){localOffsets[s.lid]=body.offsetMs|0;try{localStorage.setItem('otokura.localOffsets',JSON.stringify(localOffsets));}catch(e){}}
-  const t=await LDB.get('tracks',s.lid),ly=t&&t.lyrics?parseLyricsText(t.lyrics,'tag:text',s.d*1000):null;
-  return {trackId:s.dbid,available:!!ly,lyrics:ly,offsetMs:localOffsets[s.lid]||0,canFetch:false,lrclibMiss:false};
+  const off=()=>localOffsets[s.lid]||0,setOff=v=>{localOffsets[s.lid]=v|0;try{localStorage.setItem('otokura.localOffsets',JSON.stringify(localOffsets));}catch(e){}};
+  let m=await LDB.get('lyrics',s.lid);const keep=()=>{m=m||{id:s.lid};m.prev={text:m.text||null,off:off()};};
+  if(method==='PUT'&&path==='/offset')setOff(body.offsetMs);
+  if(method==='PUT'&&path===''){keep();m.text=body.text;if(body.offsetMs!=null)setOff(body.offsetMs);await LDB.put('lyrics',m);}
+  if(method==='DELETE'&&path==='/manual'){keep();m.text=null;await LDB.put('lyrics',m);}
+  if(method==='POST'&&path==='/restore'){if(!m||!m.prev)throw new Error('戻せる版がありません');m.text=m.prev.text;setOff(m.prev.off);m.prev=null;await LDB.put('lyrics',m);}
+  const t=await LDB.get('tracks',s.lid),ms=s.d*1000;
+  const ly=m&&m.text?parseLyricsText(m.text,'manual',ms):t&&t.lyrics?parseLyricsText(t.lyrics,'tag:text',ms):null;
+  return {trackId:s.dbid,available:!!ly,lyrics:ly,offsetMs:off(),canFetch:false,lrclibMiss:false,hasPrev:!!(m&&m.prev)};
 }
 function localProvidersHtml(){
   const cnt=id=>SONGS.filter(x=>x.src===id).length;
