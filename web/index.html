@@ -288,6 +288,7 @@ button.chip[aria-pressed="true"],button.chip[aria-selected="true"]{background:va
 .offc button{display:grid;place-items:center}
 .offc output{min-width:66px;text-align:center;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .offc{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.offc output{cursor:pointer;touch-action:manipulation}
 .mi span small{display:block;font-size:12px;color:var(--muted);line-height:1.4;margin-top:2px}
 /* 歌詞のタイミングの編集モード */
 .lyrbar.ted{flex-direction:column;align-items:stretch;gap:6px}
@@ -1191,14 +1192,14 @@ const lyrSeek=s=>`<div class="lfseek"><span class="lft" id="lfcur">${fmtT(st.pos
 const offLabel=v=>v?`${(Math.abs(v)/1000).toFixed(1)}秒${v>0?'早く':'遅く'}`:'ずれなし';
 function lyrBarIn(s){
   const c=lyrCache.get(s.id),d=c&&c.data,ly=d&&d.lyrics;
-  const has=ly&&ly.layers&&ly.layers.length&&!ly.instrumental;
+  const has=!!(ly&&!ly.instrumental&&ly.layers&&ly.layers.some(l=>l.lines&&l.lines.some(x=>x.text)));   // 歌詞が無ければ種類の札もずれの調整も出さない
   const est=has&&(lyrMain(s,ly)||{}).estimated,step=100;
   const sync=has?(ly.hasWords?'語ごと':ly.synced?'行ごと':est?'時刻は推定':'同期なし'):'';
   // 全画面の歌詞のときだけ見える曲名・アーティスト(隣に歌詞の出どころの札が並ぶ)
   const info=`<span class="lfinfo"><b>${esc(s.t)}</b><small>${esc(s.ar||alOf(s).a)}</small></span>`;
   if(!has)return `<div class="lyrbar">${info}<span class="sp"></span><span class="lfgrp"><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</span></div>`;
   return `<div class="lyrbar">${info}<span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。タイミング調整を長押しすると、行ごとに記録できます':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
-    ${ly.synced||est?`<span class="offc" title="その場だけの調整(保存しません)。↑で歌詞を先へ、↓で後へ。長押しで編集モード(保存できます)"><button data-act="lyrOff" ${est?'data-line="1" aria-label="次の行を今の位置に合わせる"':`data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す"`}>${ico('up',18)}</button><output id="lyroff">${offLabel(lyrOffset(s.id))}</output><button data-act="lyrOff" ${est?'data-line="-1" aria-label="前の行を今の位置に合わせる"':`data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す"`}>${ico('down',18)}</button></span>`:''}
+    ${ly.synced||est?`<span class="offc" title="その場だけの調整(保存しません)。↑で歌詞を先へ、↓で後へ。長押しか、真ん中の表示を 3 回続けて押すと編集モード(保存できます)"><button data-act="lyrOff" ${est?'data-line="1" aria-label="次の行を今の位置に合わせる"':`data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す"`}>${ico('up',18)}</button><output id="lyroff">${offLabel(lyrOffset(s.id))}</output><button data-act="lyrOff" ${est?'data-line="-1" aria-label="前の行を今の位置に合わせる"':`data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す"`}>${ico('down',18)}</button></span>`:''}
     <span class="lfgrp"><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</span></div>`;
 }
 // 歌詞だけ(全画面)のときに歌詞バーに出す、前後の曲・再生と、下の段と同じ「歌詞」ボタン(下の段が隠れるため。押すと写真に戻る)
@@ -1224,7 +1225,7 @@ function lyrMenuSheet(){
     +(d&&d.canFetch?mi('lyrFetch','search','LRCLIB で探し直す'):'')
     +mi('lyrPaste','add','歌詞を貼り付ける')
     +mi('lyrFile','folder','ファイルから読み込む(.lrc / .ttml / .txt)')
-    +(!s.local&&ly&&!ly.instrumental?mi('tedSheet','edit','タイミングを編集(タイミング調整の長押しでも開けます)'):'')
+    +(!s.local&&ly&&!ly.instrumental?mi('tedSheet','edit','タイミングを編集(タイミング調整の長押し・3 回押しでも開けます)'):'')
     +(d&&d.hasPrev&&!s.local?mi('tedRestore','back','記録・登録する前の歌詞に戻す'):'')
     +(ly&&ly.source==='manual'?mi('lyrClear','close','手動で登録した歌詞を削除'):'')
     +`<input type="file" id="lyrfile" accept=".lrc,.ttml,.xml,.txt,text/plain" hidden>`);
@@ -1865,7 +1866,10 @@ document.addEventListener('input',e=>{
   if(t.dataset&&props){if(t.dataset.f)props.df[t.dataset.f]=t.value;if(t.dataset.tk)props.dt[t.dataset.tk]=t.value;if(t.dataset.nk!=null)props.nk[t.dataset.nk]=t.value;}
   if(t.dataset&&t.dataset.rng){st.set[t.dataset.rng]=+t.value;t.nextElementSibling.textContent=t.value+t.dataset.u;saveSettings();}
 });
-/* タイミング調整のエリアを長押しで、歌詞のタイミングの編集へ */
+/* タイミング調整のエリアを長押し、または「ずれなし」の表示を 3 回続けて押すと、歌詞のタイミングの編集へ */
+{let n=0,at=0;
+  document.addEventListener('click',e=>{if(!e.target.closest('.lyrbar:not(.ted) .offc output'))return;
+    const t=performance.now();n=t-at<500?n+1:1;at=t;if(n>=3){n=0;if(navigator.vibrate)navigator.vibrate(30);tedSheet();}});}
 {let lpT=null,lpDone=false;
   const stop=()=>{clearTimeout(lpT);lpT=null;};
   document.addEventListener('pointerdown',e=>{if(!e.target.closest('.lyrbar:not(.ted) .offc'))return;lpDone=false;stop();
