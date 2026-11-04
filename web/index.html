@@ -317,7 +317,12 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xinfo .sub{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .xinfo .sub a{text-decoration:underline;text-decoration-color:transparent}
 .xinfo .sub a:hover{text-decoration-color:currentColor}
-.xchips{display:flex;gap:6px;flex-wrap:wrap}
+.xchips{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+/* 形式と評価を 1 段に(入りきらなければ折り返す) */
+.xmeta{display:flex;align-items:center;justify-content:space-between;gap:6px 10px;flex-wrap:wrap}
+.xmeta .stars{gap:0;margin-left:auto}
+.xmeta .stars button{width:30px;height:30px}
+.xmeta .stars svg{width:22px;height:22px}
 .stars{display:flex;justify-content:center;gap:4px;color:var(--star)}
 .stars button{width:36px;height:36px;display:grid;place-items:center;color:var(--muted)}
 .stars button.on{color:var(--star)}
@@ -325,12 +330,22 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .wave{flex:1;height:48px;display:flex;align-items:center;gap:2px;cursor:pointer;touch-action:none;min-width:0}
 .wave i{flex:1;min-width:1px;background:var(--s3);border-radius:2px}
 .wave i.on{background:var(--pri)}
-.line{flex:1;height:6px;border-radius:3px;background:var(--s3);cursor:pointer;position:relative;touch-action:none}
+.line{flex:1;height:4px;border-radius:2px;background:var(--s3);cursor:pointer;position:relative;touch-action:none}
+.line::after{content:"";position:absolute;left:0;right:0;top:-12px;bottom:-12px}   /* 細い線でも押しやすく */
 .line i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--pri);width:0}
 .ctl{display:flex;align-items:center;justify-content:space-between}
 .ctl .ib{width:52px;height:52px}
 .ctl .ib.act{background:var(--pc);color:var(--on-pc)}
 .xbot{display:flex;justify-content:space-around;margin-top:auto;padding-top:6px}
+/* 縦の再生中画面: スクロールせずに画面に収める。ジャケット(または歌詞)が残りの高さに合わせて縮む */
+.xp:not(.wide) .in{height:100%;min-height:540px;gap:10px;padding-bottom:10px}
+.xp:not(.wide) .xl{display:flex;flex-direction:column;justify-content:center;gap:8px;flex:1 1 0;min-height:0;container-type:size}   /* 余った高さはジャケットの上下に分ける */
+.xp:not(.wide) .xart{width:min(100cqw,calc(100cqh - var(--lp,0px)));margin:0 auto;flex:none}
+.xp:not(.wide) .xl:has(.lprev:not([hidden])){--lp:74px}
+.xp:not(.wide) .xl .lyrwrap,.xp:not(.wide) .xl .lyrwrap>div{flex:1 1 0;min-height:0;margin:0;display:flex;flex-direction:column}
+.xp:not(.wide) .xl .lyr,.xp:not(.wide) .xl .lyrempty{flex:1 1 0;height:auto;min-height:0;box-sizing:border-box}
+.xp:not(.wide) .xl .lyr:not(.plain){padding:26cqh 4px 34cqh}   /* 上下の余白は幅でなく高さに合わせる(低い画面で歌詞の枠からはみ出さない) */
+.xp:not(.wide) .xbot{padding-top:0}
 .xbot button{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted);min-width:64px;padding:6px}
 .xbot button.on,.lfbtn.on{color:var(--pri)}
 /* 再生中画面: 縦はそのまま並べる。横並び(.wide)はスマホの横向きのとき、または向きのボタンで「横」を選んだとき(PC でも) */
@@ -840,7 +855,7 @@ const SETS={
   np:{title:'再生中画面',icon:'play',desc:'背景、シークバー、評価バー',items:[
     ['seg','np_bg','背景のスタイル','',[['tint','カバーの色'],['glow','グロー'],['plain','単色']]],
     ['seg','np_tap','カバーをタップしたとき','',[['lyrics','歌詞を表示'],['none','何もしない']]],
-    ['sw','np_wave','シークバーを波形で表示',''],['sw','np_rating','評価バーを表示','星で曲を評価します']]},
+    ['sw','np_rating','評価バーを表示','星で曲を評価します']]},
   lyrics:{title:'歌詞',icon:'lyrics',desc:'文字の大きさ、ぼかし、取得',items:[
     ['seg','np_lyrsize','文字の大きさ','',[['小','小'],['中','中'],['大','大']]],
     ['sw','np_lyrblur','歌い終えた行をぼかす','いま歌っている行が目立ちます'],
@@ -1329,8 +1344,6 @@ function applyTheme(){
   r.style.setProperty('--cr',{小:'8px',中:'16px',大:'26px'}[st.set.radius]||'16px');
   setHue();
 }
-const WN=96;
-const waveBars=seed=>{let h='';for(let i=0;i<WN;i++){const v=Math.abs(Math.sin(i*.37+seed)*Math.cos(i*.11+seed*2))*.75+Math.abs(Math.sin(i*1.7+seed))*.25;h+=`<i style="height:${Math.round(14+v*86)}%"></i>`;}return h;};
 // 棚(横に並ぶカード)が入りきらないとき、見出しに ‹ › を出し、続きがある側をぼかす
 function enhanceShelves(root){
   root.querySelectorAll('.shelf').forEach(sh=>{
@@ -1384,9 +1397,8 @@ function renderXP(){
     <div class="xl">${art}</div><div class="xr">
     <div class="xinfo"><div class="tt"><h2>${esc(s.t)}</h2><div class="sub"><a href="${href('artist/'+al.a)}" data-act="goArtist" data-n="${esc(al.a)}">${esc(s.ar||al.a)}</a> ・ <a href="${href('album/'+al.id)}" data-act="goAlbum" data-id="${al.id}">${esc(al.t)}</a></div></div>
       <button class="ib ${s.fav?'fav-on':''}" data-act="fav" data-id="${s.id}" aria-label="お気に入り">${ico(s.fav?'heart':'heart0',26)}</button></div>
-    <div class="xchips"><span class="chip pri">${ci[0]}</span><span class="chip">${ci[1]}</span>${st.out!=='browser'?`<span class="chip">${ico('cast',14)}${esc(o[1])}</span>`:''}</div>
-    ${S.np_rating?`<div class="stars" role="group" aria-label="評価">${[1,2,3,4,5].map(n=>`<button class="${s.rating>=n?'on':''}" data-act="rate" data-n="${n}" aria-label="${n}つ星">${ico(s.rating>=n?'star':'star0',26)}</button>`).join('')}</div>`:''}
-    <div class="seek"><span id="tcur">0:00</span>${S.np_wave?`<div class="wave" id="wave" role="slider" tabindex="0" aria-label="再生位置" aria-valuemin="0" aria-valuemax="${s.d}" aria-valuenow="0">${waveBars(s.id*1.3+1)}</div>`:`<div class="line" id="wave" role="slider" tabindex="0" aria-label="再生位置" aria-valuemin="0" aria-valuemax="${s.d}" aria-valuenow="0"><i id="lnf"></i></div>`}<span>${fmtT(s.d)}</span></div>
+    <div class="xmeta"><div class="xchips"><span class="chip pri">${ci[0]}</span><span class="chip">${ci[1]}</span>${st.out!=='browser'?`<span class="chip">${ico('cast',14)}${esc(o[1])}</span>`:''}</div>${S.np_rating?`<div class="stars" role="group" aria-label="評価">${[1,2,3,4,5].map(n=>`<button class="${s.rating>=n?'on':''}" data-act="rate" data-n="${n}" aria-label="${n}つ星">${ico(s.rating>=n?'star':'star0',26)}</button>`).join('')}</div>`:''}</div>
+    <div class="seek"><span id="tcur">0:00</span><div class="line" id="wave" role="slider" tabindex="0" aria-label="再生位置" aria-valuemin="0" aria-valuemax="${s.d}" aria-valuenow="0"><i id="lnf"></i></div><span>${fmtT(s.d)}</span></div>
     <div class="ctl"><button class="ib ${st.shuf?'act':''}" data-act="shufMode" aria-label="シャッフル" aria-pressed="${st.shuf}">${ico('shuffle',26)}</button>
       <button class="ib" data-act="prev" aria-label="前の曲">${ico('prev',34)}</button>
       <button class="ib" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',38)}</button>
