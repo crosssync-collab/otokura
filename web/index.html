@@ -109,6 +109,15 @@ button.chip[aria-pressed="true"],button.chip[aria-selected="true"]{background:va
 .sc.list{grid-template-columns:1fr;gap:0}
 .sc.list button{flex-direction:row;gap:14px;font-size:15px;padding:8px 4px;border-bottom:1px solid var(--line)}
 .sc.list .ic{width:40px;height:40px;border-radius:12px}
+.sc .ic{background-size:cover;background-position:center}
+.sc .ic svg{display:none}   /* 写真を使うのでアイコンは出さない(写真が読めないときだけ下の色) */
+.sc.photo{grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+@media (min-width:700px){.sc.photo{grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px}}
+.sc.photo button{position:relative;display:block;padding:0;aspect-ratio:1;border-radius:14px;overflow:hidden}
+.sc.photo .ic{width:100%;height:100%;border-radius:0}
+.sc.photo button>span:last-child{position:absolute;left:0;right:0;bottom:0;padding:16px 6px 5px;font-size:11px;font-weight:700;line-height:1.2;color:#fff;text-align:left;
+  background:linear-gradient(transparent,rgba(0,0,0,.7));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (min-width:700px){.sc.photo button>span:last-child{font-size:13px;padding:20px 8px 7px}}
 
 /* rows & cards */
 .hrow{margin-bottom:22px}
@@ -672,7 +681,9 @@ function pageHome(){
   const hr=(on,title,body,more='')=>on?`<section class="hrow"><div class="hh"><h2>${title}</h2>${more}</div>${body}</section>`:'';
   const sc1=[['albums','album','アルバム'],['artists','people','アーティスト'],['genres','tag','ジャンル'],['songs','note','曲'],['playlists','list','プレイリスト'],['folders','folder','フォルダ']];
   const sc2=[['mixTrack','mix','曲ミックス'],['mixDecade','mix','年代ミックス'],['srcSheet','filter','ソース'],['outSheet','cast','再生先']];
-  const btn=(a,i,t)=>`<button data-act="${['albums','artists','genres','songs','playlists','folders'].includes(a)?'lib':a}" data-t="${a}"><span class="ic">${ico(i,26)}</span><span>${t}</span></button>`;
+  // ショートカットは写真(web/mix/*.jpg。ミックスと同じく 2 色に染めたもの)。アイコンの見た目では写真だけの同じ大きさの四角に名前を載せる
+  const SC_ART={mixTrack:'mixtrack',mixDecade:'mixdecade',srcSheet:'sources',outSheet:'outputs'};
+  const btn=(a,i,t)=>`<button data-act="${['albums','artists','genres','songs','playlists','folders'].includes(a)?'lib':a}" data-t="${a}"><span class="ic" style="background-image:url('mix/${SC_ART[a]||a}.jpg')">${ico(i,26)}</span><span>${t}</span></button>`;
   const albums=AL.filter(visAl);
   // 最近再生したアルバム: 最後に再生した時刻の新しい順(左が一番最近)。再生していないアルバムは出さない。モックは日数で並べる
   const lastOf=a=>Math.max(...songsOfAl(a.id).map(s=>s.last||(s.ago<999?-s.ago*86400:-1e12)));
@@ -688,8 +699,7 @@ function pageHome(){
     +mixCard('mixTrack','','track',0,al.h,'曲ミックス','ライブラリ全体から曲を選びます')
     +mixCard('mixAlbum','','album',1,(al.h+40)%360,'アルバムミックス','アルバムをまるごと並べます')
     +DECADES.map((d,i)=>mixCard('mixDecade',`data-d="${d}"`,d,i,[200,35,310,140][i%4],`${d}年代ミックス`,`${vs.filter(x=>decadeOf(alOf(x))===d).length} 曲`)).join('');
-  return `<div class="sc ${S.hs==='grid'?'':S.hs}">${sc1.map(x=>btn(...x)).join('')}</div>
-   <div class="sc ${S.hs==='grid'?'':S.hs}" style="margin-top:-6px">${sc2.map(x=>btn(...x)).join('')}</div>
+  return `<div class="sc ${S.hs==='grid'?'photo':S.hs}">${sc1.concat(sc2).map(x=>btn(...x)).join('')}</div>
    ${hr(S.h_mixes,'ミックス',`<div class="shelf">${mixes}</div>`)}
    ${hr(S.h_quick,'クイックピック',`<div class="shelf">${quick.length?quick.map(songCard).join(''):'<span class="muted">お気に入りの曲がここに並びます</span>'}</div>`,'<span class="muted" style="font-size:13px">お気に入りからランダム</span>')}
    ${hr(S.h_recent&&recent.length,'最近再生したアルバム',`<div class="shelf">${recent.map(albumCard).join('')}</div>`,`<a href="${href('library/albums')}">すべて ${ico('chev',18)}</a>`)}
@@ -1362,7 +1372,7 @@ function shelfState(sh,nav){
   sh.classList.toggle('more-l',over&&l);sh.classList.toggle('more-r',over&&r);
 }
 // 入りきらない曲名などを、時間で横に流して全体を見せる(再生中の画面とミニプレーヤー)
-const MQ_SEL='.mini .tt b,.mini .tt small,.xinfo h2,.xinfo .sub,.xtop .ctx b,.lyrfull .lfinfo b,.lyrfull .lfinfo small';
+const MQ_SEL='.mini .tt b,.mini .tt small,.xinfo h2,.xinfo .sub,.xtop .ctx b,.lyrfull .lfinfo b,.lyrfull .lfinfo small,.sc.photo button>span:last-child';
 function applyMarquee(root){
   if(!root)return;
   root.querySelectorAll(MQ_SEL).forEach(el=>{
@@ -1373,7 +1383,7 @@ function applyMarquee(root){
   });
 }
 {let t=null;addEventListener('resize',()=>{clearTimeout(t);t=setTimeout(()=>{renderMini();renderXP();enhanceShelves($('#page'));},250);});}
-new MutationObserver(()=>{cancelAnimationFrame(enhanceShelves._f);enhanceShelves._f=requestAnimationFrame(()=>enhanceShelves($('#page')));})
+new MutationObserver(()=>{cancelAnimationFrame(enhanceShelves._f);enhanceShelves._f=requestAnimationFrame(()=>{enhanceShelves($('#page'));applyMarquee($('#page'));});})
   .observe(document.getElementById('page'),{childList:true});
 function renderMini(){
   if(!cur()){$('#mini').hidden=true;return;}$('#mini').hidden=false;

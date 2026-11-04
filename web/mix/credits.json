@@ -38,5 +38,45 @@
  "2020": {
   "photo": "https://unsplash.com/photos/uHqmPVdJIu0",
   "by": "zelebb"
+ },
+ "albums": {
+  "photo": "https://unsplash.com/photos/vDTwCDBaMtk",
+  "by": "bel2000a"
+ },
+ "artists": {
+  "photo": "https://unsplash.com/photos/So6YckShOVA",
+  "by": "tijsvl"
+ },
+ "genres": {
+  "photo": "https://unsplash.com/photos/PukZSAi_K5o",
+  "by": "caught_in_joy"
+ },
+ "songs": {
+  "photo": "https://unsplash.com/photos/-uv6f6mKFbg",
+  "by": "lewitt_audio"
+ },
+ "playlists": {
+  "photo": "https://unsplash.com/photos/WWVnwP4D-N0",
+  "by": "etiennegirardet"
+ },
+ "folders": {
+  "photo": "https://unsplash.com/photos/Okb-hcdhqk8",
+  "by": "rocinante_11"
+ },
+ "mixtrack": {
+  "photo": "https://unsplash.com/photos/980HYjxdT-U",
+  "by": "wvtvnvbe"
+ },
+ "mixdecade": {
+  "photo": "https://unsplash.com/photos/nNNCmnY5Kls",
+  "by": "indraprojects"
+ },
+ "sources": {
+  "photo": "https://unsplash.com/photos/VYfxkePredI",
+  "by": "nkend"
+ },
+ "outputs": {
+  "photo": "https://unsplash.com/photos/4YTe7OEaZkI",
+  "by": "tawshif"
  }
 }
