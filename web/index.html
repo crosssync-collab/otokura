@@ -673,7 +673,7 @@ function songRow(s,cxi,i,o={}){
     <span class="du">${fmtT(s.d)}</span>
     <button class="ib sm" data-act="menu" data-k="song" data-id="${s.id}" aria-label="メニュー">${ico('more',20)}</button></div>`;
 }
-const chipsFor=(al,s)=>{if(LIVE&&s)return [s.fmt||s.codec,needsTc(s)?`${TRANSCODE[s.codec]} に変換して配信`:s.playable?'そのまま配信':'再生できません'];const ext=al.f.split(' ')[0];const nat=['FLAC','MP3','AAC'].includes(ext);return [al.f,nat?'そのまま配信':`${ext} → FLAC に変換`];};
+const chipsFor=(al,s)=>{if(LIVE&&s)return [s.fmt||s.codec,needsTc(s)?(s.cue?'CUE から切り出して配信':`${TRANSCODE[s.codec]} に変換して配信`):s.playable?'そのまま配信':'再生できません'];const ext=al.f.split(' ')[0];const nat=['FLAC','MP3','AAC'].includes(ext);return [al.f,nat?'そのまま配信':`${ext} → FLAC に変換`];};
 
 /* ================= pages ================= */
 function pageHome(){
@@ -1997,7 +1997,7 @@ async function loadLibrary(){
   d.tracks.forEach(r=>{const t=C(d.trackColumns,r),ai=aIdx.get(t.albumId);if(ai==null)return;const al=AL[ai];
     const s={id:SONGS.length,dbid:t.id,al:ai,n:t.no||al.tr.length+1,disc:t.disc||1,t:t.title,ar:t.artist,d:Math.max(1,Math.round(t.durationMs/1000)),
       plays:t.plays,fav:!!t.fav,rating:t.rating,ago:t.lastPlayed?Math.floor((d.now-t.lastPlayed)/86400):999,last:t.lastPlayed||0,skips:t.skips,
-      codec:t.codec,sr:t.sampleRate||0,playable:PLAYABLE.includes(t.codec),rel:t.rel,src:t.source,fmt:fmtLabel(t)};
+      codec:t.codec,sr:t.sampleRate||0,cue:!!t.cue,playable:PLAYABLE.includes(t.codec),rel:t.rel,src:t.source,fmt:fmtLabel(t)};
     SONGS.push(s);al.tr.push(s.id);if(!al.f)al.f=s.fmt;
     if(t.artist!==al.a&&al.a!=='Various Artists'){const l=APPEARS[t.artist]=APPEARS[t.artist]||[];if(!l.includes(ai))l.push(ai);}
   });
@@ -2030,7 +2030,9 @@ let lt={dbid:null,listened:0,counted:false,ended:false,last:0},skipChain=0,switc
 let TRANSCODE={};const tcReady=new Set();
 const DIRECT_MIME={ALAC:'audio/mp4; codecs="alac"',AIFF:'audio/aiff'};
 const canDirect=s=>!!(DIRECT_MIME[s.codec]&&audio.canPlayType(DIRECT_MIME[s.codec]));
-const needsTc=s=>!!(s&&!s.local&&TRANSCODE[s.codec]&&!canDirect(s));
+const CUT_LOSSY=['MP3','AAC','Vorbis','Opus','WMA','MPC'];
+const tcTarget=s=>s.cue?(CUT_LOSSY.includes(s.codec)?'AAC':'FLAC'):TRANSCODE[s.codec];   // CUE シートの曲は区間を切り出して配る
+const needsTc=s=>!!(s&&!s.local&&(s.cue||TRANSCODE[s.codec]&&!canDirect(s)));
 function tcPrepare(s){   // 次の曲を先に変換しておく
   if(!needsTc(s)||tcReady.has(s.dbid))return;
   api(`/api/tracks/${s.dbid}/prepare`,{method:'POST'}).then(r=>{if(r.ready)tcReady.add(s.dbid);}).catch(()=>{});
@@ -2040,8 +2042,8 @@ function ensureSrc(){
   if(!s.playable){toast(`${s.codec} は再生できません`);return false;}
   if(s.local)return localSrc(s);
   if(audio.dataset.dbid!==String(s.dbid)){switching=st.playing;
-    if(needsTc(s)&&!tcReady.has(s.dbid))toast(`${s.codec} を ${TRANSCODE[s.codec]} に変換しています(初めての曲だけ数秒かかります)`);
-    audio.src=`${API}/api/tracks/${s.dbid}/stream${canDirect(s)?'?direct=1':''}`;audio.dataset.dbid=String(s.dbid);tcReady.add(s.dbid);}
+    if(needsTc(s)&&!tcReady.has(s.dbid))toast(s.cue?'CUE シートから曲を切り出しています(初めての曲だけ数秒かかります)':`${s.codec} を ${TRANSCODE[s.codec]} に変換しています(初めての曲だけ数秒かかります)`);
+    audio.src=`${API}/api/tracks/${s.dbid}/stream${canDirect(s)&&!s.cue?'?direct=1':''}`;audio.dataset.dbid=String(s.dbid);tcReady.add(s.dbid);}
   const nx=SONGS[st.q[st.qi+1]];if(nx)tcPrepare(nx);
   return true;
 }
@@ -2131,7 +2133,8 @@ function castLoad(s,pos,play){
   if(!castS||!s)return;
   if(s.local){toast('この端末の曲は Cast できないので、次の曲へ進みます');setTimeout(()=>step(1,true),0);return;}
   // 変換するもの・48kHz を超えるもの(Cast 向けに 48kHz の FLAC にする)は変換後の形式で送る
-  const mime=TRANSCODE[s.codec]==='AAC'?'audio/mp4':TRANSCODE[s.codec]||s.sr>48000?'audio/flac':CAST_MIME[s.codec];
+  const tt=s.cue||TRANSCODE[s.codec]?tcTarget(s):null;
+  const mime=tt==='AAC'?'audio/mp4':tt||s.sr>48000?'audio/flac':CAST_MIME[s.codec];
   if(!s.playable||!mime){toast(`${s.codec} は Cast で再生できないので、次の曲へ進みます`);setTimeout(()=>step(1,true),0);return;}
   const al=alOf(s),base=castBase(),url=`${base}/api/tracks/${s.dbid}/stream?cast=1`;
   const mi=new chrome.cast.media.MediaInfo(url,mime),md=new chrome.cast.media.MusicTrackMediaMetadata();

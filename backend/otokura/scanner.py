@@ -6,10 +6,10 @@ import os
 import threading
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import art, metadata
+from . import art, cue, metadata
 from .config import Config, Source
 from .db import Database
 
@@ -147,9 +147,20 @@ class Scanner:
             existing = {(r["source"], r["rel"]): r for r in self.db.q("SELECT id,source,rel,mtime,size,album_id FROM tracks")}
             c = self.db.conn
             n = 0
+            cues = cue.CueIndex()
             for src, p, stt in work:
                 rel = p.relative_to(src.path)
                 rels = rel.as_posix()
+                hit = cues.find(p)
+                if hit:     # CUE シートで 1 つのファイルが何曲にも分かれている
+                    try:
+                        n += self._scan_cue(src, p, rel, rels, stt, hit, existing, seen[src.id], touched, full)
+                    except Exception as e:
+                        st.errors.append(f"{src.name}/{rels}: {e}")
+                    st.done += 1
+                    if len(self._pending) >= BATCH:
+                        self._flush(c)
+                    continue
                 seen[src.id].add(rels)
                 old = existing.get((src.id, rels))
                 if old and not full and abs(old["mtime"] - stt.st_mtime) < 1e-3 and old["size"] == stt.st_size:
@@ -208,6 +219,45 @@ class Scanner:
                     log.exception("on_done")
             log.info("スキャン完了: 追加 %d / 更新 %d / 削除 %d / エラー %d", st.added, st.updated, st.removed, len(st.errors))
 
+    def _scan_cue(self, src, p, rel, rels, stt, hit, existing, seen, touched, full) -> int:
+        """CUE シートの曲を「元のファイル#曲番号」として登録する。CUE を書き換えたときも読み直す。"""
+        sheet, tracks = hit
+        try:
+            mtime = max(stt.st_mtime, sheet.path.stat().st_mtime)
+        except OSError:
+            mtime = stt.st_mtime
+        size = stt.st_size
+        vrels = [f"{rels}#{t.no:02d}" for t in tracks]
+        seen.update(vrels)
+        olds = [existing.get((src.id, v)) for v in vrels]
+        if not full and all(o and abs(o["mtime"] - mtime) < 1e-3 and o["size"] == size for o in olds):
+            for o, v in zip(olds, vrels):
+                self._lyrics(o["id"], src, v)
+            return 0
+        info = metadata.read(p, rel)
+        if info is None:
+            return 0
+        year = metadata._int(sheet.date) if sheet.date else None
+        stamp = type("S", (), {"st_mtime": mtime, "st_size": size})()
+        for t, v, old in zip(tracks, vrels, olds):
+            end = t.end_ms if t.end_ms is not None else info.duration_ms
+            ti = replace(info, title=t.title or f"Track {t.no:02d}", artist=t.performer or sheet.performer or info.artist,
+                         album=sheet.title or info.album, albumartist=sheet.performer or info.albumartist,
+                         year=year or info.year, genre=sheet.genre or info.genre, track_no=t.no,
+                         disc_no=sheet.disc or info.disc_no, duration_ms=max(0, end - t.start_ms), guessed=False)
+            with self.db.write_lock:
+                aid = self._album(src, ti, rel, p)
+                tid = self._upsert_track(src, v, stamp, ti, aid, old, (t.start_ms, t.end_ms))
+            touched.add(aid)
+            if old and old["album_id"]:
+                touched.add(old["album_id"])
+            if old:
+                self.state.updated += 1
+            else:
+                self.state.added += 1
+            self._lyrics(tid, src, v, ti)
+        return len(tracks)
+
     # ---------- 部品 ----------
     def _walk(self, root: Path):
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
@@ -250,19 +300,20 @@ class Scanner:
         if res:
             self.db.conn.execute("UPDATE albums SET art=?, art_src=?, hue=? WHERE id=?", (res[0], src, res[1], aid))
 
-    def _upsert_track(self, src, rels, stt, info, aid, old) -> int:
+    def _upsert_track(self, src, rels, stt, info, aid, old, cue_range=(None, None)) -> int:
         c = self.db.conn
         vals = (stt.st_mtime, stt.st_size, aid, info.title, info.artist, info.albumartist, info.album, info.year,
                 info.genre, info.track_no, info.disc_no, info.duration_ms, info.codec, info.sample_rate,
-                info.bit_depth, info.bitrate, int(info.fixed), int(info.guessed))
+                info.bit_depth, info.bitrate, int(info.fixed), int(info.guessed), *cue_range)
         if old:
             c.execute("UPDATE tracks SET mtime=?,size=?,album_id=?,title=?,artist=?,albumartist=?,album=?,year=?,genre=?,"
                       "track_no=?,disc_no=?,duration_ms=?,codec=?,sample_rate=?,bit_depth=?,bitrate=?,tag_fixed=?,"
-                      "tag_guessed=? WHERE id=?", (*vals, old["id"]))
+                      "tag_guessed=?,cue_start=?,cue_end=? WHERE id=?", (*vals, old["id"]))
             return old["id"]
         cur = c.execute("INSERT INTO tracks(mtime,size,album_id,title,artist,albumartist,album,year,genre,track_no,"
-                        "disc_no,duration_ms,codec,sample_rate,bit_depth,bitrate,tag_fixed,tag_guessed,source,rel,added_at)"
-                        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*vals, src.id, rels, time.time()))
+                        "disc_no,duration_ms,codec,sample_rate,bit_depth,bitrate,tag_fixed,tag_guessed,cue_start,cue_end,"
+                        "source,rel,added_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (*vals, src.id, rels, time.time()))
         return cur.lastrowid
 
     def _finish_albums(self, ids: set[int]):

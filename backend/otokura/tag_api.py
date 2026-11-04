@@ -40,6 +40,8 @@ def make_router(db, cfg, scanner, src_by_id, track_row, track_path) -> APIRouter
             raise HTTPException(409, "音楽ファイルに書き込めません。音楽フォルダが読み取り専用でつながれていないか確認してください")
 
     def edit_one(row, fields=None, tags=None, cover=None, remove_cover=False, grp=None) -> dict:
+        if row["cue_start"] is not None:
+            raise HTTPException(409, "CUE シートの曲はタグを編集できません(曲名などは .cue ファイルを書き換えてください)")
         p = track_path(row)
         writable(p)
         try:

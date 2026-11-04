@@ -62,7 +62,8 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         src = src_by_id.get(r["source"])
         if src is None:
             raise HTTPException(404, "この曲のソースは設定から外されています")
-        p = (src.path / r["rel"]).resolve()
+        rel = r["rel"].rsplit("#", 1)[0] if "cue_start" in r.keys() and r["cue_start"] is not None else r["rel"]   # CUE の曲は「元のファイル#曲番号」
+        p = (src.path / rel).resolve()
         if src.path.resolve() not in p.parents:
             raise HTTPException(400, "不正なパスです")
         return p
@@ -96,7 +97,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         tracks = db.q(
             "SELECT t.id,t.album_id,t.disc_no,t.track_no,t.title,t.artist,t.duration_ms,t.codec,t.sample_rate,"
             "t.bit_depth,t.bitrate,t.rel,t.source,COALESCE(s.plays,0) plays,s.last_played,COALESCE(s.skips,0) skips,"
-            "COALESCE(s.fav,0) fav,COALESCE(s.rating,0) rating,t.tag_fixed,t.tag_guessed "
+            "COALESCE(s.fav,0) fav,COALESCE(s.rating,0) rating,t.tag_fixed,t.tag_guessed,t.cue_start IS NOT NULL cue "
             "FROM tracks t LEFT JOIN track_stats s ON s.source=t.source AND s.rel=t.rel "
             "ORDER BY t.album_id, COALESCE(t.disc_no,1), COALESCE(t.track_no,9999), t.rel")
         return {
@@ -109,7 +110,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "albums": [list(r) for r in albums],
             "trackColumns": ["id", "albumId", "disc", "no", "title", "artist", "durationMs", "codec", "sampleRate",
                              "bitDepth", "kbps", "rel", "source", "plays", "lastPlayed", "skips", "fav", "rating",
-                             "tagFixed", "tagGuessed"],
+                             "tagFixed", "tagGuessed", "cue"],
             "tracks": [list(r) for r in tracks],
         }
 
@@ -122,6 +123,15 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         if not p.is_file():
             raise HTTPException(404, "ファイルが見つかりません。再スキャンしてください")
         codec = r["codec"]
+        if r["cue_start"] is not None:      # CUE シートの曲: その区間だけを切り出して配る
+            if not tc.available:
+                raise HTTPException(415, "CUE シートの曲の再生には ffmpeg が必要です")
+            try:
+                out = tc.get(p, codec, cast=cast and (r["sample_rate"] or 0) > 48000 and codec not in TRANSCODE_LOSSY,
+                             cut=(r["cue_start"], r["cue_end"]))
+            except Exception as e:
+                raise HTTPException(500, f"CUE シートの曲を切り出せませんでした: {e}")
+            return FileResponse(out, media_type=transcode_target(codec)[2], headers={"Cache-Control": "private, max-age=3600"})
         hires = cast and codec not in TRANSCODE_LOSSY and ((r["sample_rate"] or 0) > 48000 or codec == "DSD")
         if hires and tc.available:
             try:
@@ -145,14 +155,15 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         """次の曲が変換の要る形式なら、先に変換を始めておく(曲の切り替えで待たないように)。"""
         r = track_row(tid)
         codec = r["codec"]
-        if codec in metadata.BROWSER_PLAYABLE or codec not in TRANSCODE_CODECS or not tc.available:
+        cut = (r["cue_start"], r["cue_end"]) if r["cue_start"] is not None else None
+        if not cut and (codec in metadata.BROWSER_PLAYABLE or codec not in TRANSCODE_CODECS) or not tc.available:
             return {"needed": False, "ready": True}
         p = track_path(r)
         if not p.is_file():
             raise HTTPException(404, "ファイルが見つかりません")
-        ready = tc.ready(p, codec)
+        ready = tc.ready(p, codec, cut=cut)
         if not ready:
-            tc.prepare(p, codec)
+            tc.prepare(p, codec, cut=cut)
         return {"needed": True, "ready": ready}
 
     @app.get("/api/art/{album_id}")

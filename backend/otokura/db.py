@@ -90,6 +90,11 @@ class Database:
         self.write_lock = threading.RLock()
         c = self.conn
         c.executescript(SCHEMA)
+        for col in ("cue_start INTEGER", "cue_end INTEGER"):   # CUE シートの曲: 元のファイルの何ミリ秒から何ミリ秒まで
+            try:
+                c.execute(f"ALTER TABLE tracks ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
         c.commit()
 
     @property
