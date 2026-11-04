@@ -305,7 +305,8 @@ button.chip[aria-pressed="true"],button.chip[aria-selected="true"]{background:va
 .tedb:disabled{opacity:.4}
 .xp.ted .ctl,.xp.ted .xbot{display:none}
 .xp.wide.lyrfull .lyrbar.ted{justify-content:flex-start}
-.lprev{font-family:var(--display);font-weight:700;font-size:17px;line-height:1.45;cursor:pointer;padding:8px 12px;border-radius:16px;background:color-mix(in srgb,var(--s2) 70%,transparent);min-height:58px}
+.lprev{font-family:var(--display);font-weight:700;font-size:17px;line-height:1.4;cursor:pointer;padding:6px 12px;border-radius:14px;background:color-mix(in srgb,var(--s2) 70%,transparent);min-height:52px}
+.xp.wide .lprev{font-size:15px;min-height:46px;padding:4px 12px}
 .lprev .a{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lprev .b{display:block;color:var(--muted);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lprev small{display:block;font:500 11px var(--body);color:var(--muted);margin-bottom:2px}
@@ -341,7 +342,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xp:not(.wide) .in{height:100%;min-height:540px;gap:10px;padding-bottom:10px}
 .xp:not(.wide) .xl{display:flex;flex-direction:column;justify-content:center;gap:8px;flex:1 1 0;min-height:0;container-type:size}   /* 余った高さはジャケットの上下に分ける */
 .xp:not(.wide) .xart{width:min(100cqw,calc(100cqh - var(--lp,0px)));margin:0 auto;flex:none}
-.xp:not(.wide) .xl:has(.lprev:not([hidden])){--lp:74px}
+.xp:not(.wide) .xl:has(.lprev:not([hidden])){--lp:62px}
 .xp:not(.wide) .xl .lyrwrap,.xp:not(.wide) .xl .lyrwrap>div{flex:1 1 0;min-height:0;margin:0;display:flex;flex-direction:column}
 .xp:not(.wide) .xl .lyr,.xp:not(.wide) .xl .lyrempty{flex:1 1 0;height:auto;min-height:0;box-sizing:border-box}
 .xp:not(.wide) .xl .lyr:not(.plain){padding:26cqh 4px 34cqh}   /* 上下の余白は幅でなく高さに合わせる(低い画面で歌詞の枠からはみ出さない) */
@@ -358,7 +359,6 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xp.wide .xr{grid-column:2;grid-row:2;display:flex;flex-direction:column;justify-content:safe center;gap:8px;min-height:0;overflow:auto;scrollbar-width:none;width:100%;max-width:680px;justify-self:center}
 .xp.wide .xr::-webkit-scrollbar{display:none}
 .xp.wide .xart{width:min(calc(100dvh - 32px),46vw);margin:0}
-.xp.wide .xl:has(.lprev:not([hidden])) .xart{width:min(calc(100dvh - 104px),46vw)}
 .xp.wide .xl:has(.lyrwrap){width:52vw;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;align-content:stretch}
 .xp.wide .xl .lyrwrap{min-height:0;margin:0}
 .xp.wide .xl .lyrwrap>div{height:100%}
@@ -1202,7 +1202,7 @@ function updatePreview(s,t){
   const L=main.lines.filter(l=>l.text),ci=bsearch(L,t),ai=ci>=0&&t<L[ci].end?ci:-1;
   const key=`${s.id}:${ci}:${ai}`;if(key===lyrPrevKey)return;lyrPrevKey=key;
   const a=ai>=0?L[ai].text:(ci<0?'♪':'♪ ♪ ♪'),b=L[ci+1]?L[ci+1].text:'';
-  el.hidden=false;el.innerHTML=`<small>歌詞</small><span class="a">${esc(a)}</span><span class="b">${esc(b)}</span>`;
+  el.hidden=false;el.innerHTML=`<span class="a">${esc(a)}</span><span class="b">${esc(b)}</span>`;
 }
 function lyrBar(s){return (ted&&ted.id===s.id?tedBar(s):lyrBarIn(s))+lyrSeek(s);}
 // 編集モードの操作(歌詞の下に 2 段。上の段に何を編集しているかを色付きで出す)
@@ -1389,9 +1389,10 @@ function renderXP(){
   const x=$('#xp'),s=cur(),al=alOf(s),S=st.set,o=OUTS.find(z=>z[0]===st.out),ci=chipsFor(al,s);
   x.className='xp '+(st.xp?'open ':'')+'bg-'+S.np_bg+(isWide()?' wide':'')+(st.lyr?' lyron':'')+(st.lyr&&st.lyrFull?' lyrfull':'')+(ted?' ted':'');
   x.style.setProperty('--xbg',artBg(al,1000));   // 歌詞を出しているときの背景(ぼかして薄く)
+  // 歌詞を小さく表示(今の行と次の行)。横並びのときはジャケットを縦いっぱいにして、右側の操作ボタンの上に置く
+  const wide=isWide(),prev=!st.lyr&&S.np_lyrprev?`<div class="lprev" id="lprev" data-act="lyrToggle" role="button" tabindex="0" aria-label="歌詞を開く" hidden></div>`:'';
   const art=st.lyr?`<div class="lyrwrap" id="lyrslot"></div>${lyrBar(s)}`
-    :`<div class="xart ${st.playing?'':'is-paused'}" data-act="artTap" style="background:${artBg(al,1000)}"><span class="paused">${ico('play',64)}</span></div>`
-     +(S.np_lyrprev?`<div class="lprev" id="lprev" data-act="lyrToggle" role="button" tabindex="0" aria-label="歌詞を開く" hidden></div>`:'');
+    :`<div class="xart ${st.playing?'':'is-paused'}" data-act="artTap" style="background:${artBg(al,1000)}"><span class="paused">${ico('play',64)}</span></div>`+(wide?'':prev);
   x.querySelector('#xin').innerHTML=`<div class="xtop"><button class="ib" data-act="xpClose" aria-label="閉じる">${ico('down')}</button>
       <div class="ctx"><small>再生中</small><b>${esc(al.t)}</b></div>${'wakeLock' in navigator?`<button class="ib ${wake.on?'act':''}" data-act="wakeToggle" aria-label="画面を消さない" aria-pressed="${wake.on}" title="画面を消さない">${ico('bulb')}</button>`:''}${`<button class="ib ${ori!=='auto'?'act':''}" data-act="oriCycle" aria-label="画面の向き: ${ORI_LABEL[ori]}" title="画面の向き: ${ORI_LABEL[ori]}">${ico({auto:'rot',landscape:'land',portrait:'port'}[ori])}</button>`}<button class="ib" data-act="menu" data-k="song" data-id="${s.id}" aria-label="メニュー">${ico('more')}</button></div>
     <div class="xl">${art}</div><div class="xr">
@@ -1399,7 +1400,7 @@ function renderXP(){
       <button class="ib ${s.fav?'fav-on':''}" data-act="fav" data-id="${s.id}" aria-label="お気に入り">${ico(s.fav?'heart':'heart0',26)}</button></div>
     <div class="xmeta"><div class="xchips"><span class="chip pri">${ci[0]}</span><span class="chip">${ci[1]}</span>${st.out!=='browser'?`<span class="chip">${ico('cast',14)}${esc(o[1])}</span>`:''}</div>${S.np_rating?`<div class="stars" role="group" aria-label="評価">${[1,2,3,4,5].map(n=>`<button class="${s.rating>=n?'on':''}" data-act="rate" data-n="${n}" aria-label="${n}つ星">${ico(s.rating>=n?'star':'star0',26)}</button>`).join('')}</div>`:''}</div>
     <div class="seek"><span id="tcur">0:00</span><div class="line" id="wave" role="slider" tabindex="0" aria-label="再生位置" aria-valuemin="0" aria-valuemax="${s.d}" aria-valuenow="0"><i id="lnf"></i></div><span>${fmtT(s.d)}</span></div>
-    <div class="ctl"><button class="ib ${st.shuf?'act':''}" data-act="shufMode" aria-label="シャッフル" aria-pressed="${st.shuf}">${ico('shuffle',26)}</button>
+    ${wide?prev:''}<div class="ctl"><button class="ib ${st.shuf?'act':''}" data-act="shufMode" aria-label="シャッフル" aria-pressed="${st.shuf}">${ico('shuffle',26)}</button>
       <button class="ib" data-act="prev" aria-label="前の曲">${ico('prev',34)}</button>
       <button class="ib" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',38)}</button>
       <button class="ib" data-act="next" aria-label="次の曲">${ico('next',34)}</button>
