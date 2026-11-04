@@ -49,3 +49,16 @@ def test_index_follows_new_files(tmp_path):
     write(tmp_path / "A - B.txt", "歌詞")
     f.checked = 0
     assert len(f.find("A", "B")) == 1
+
+
+def test_other_separators_and_newest_wins(tmp_path):
+    import os
+    old = tmp_path / "Mr.Children - All by myself.lrc"
+    write(old, "[00:01.00]Mr.Children All by myself\n[00:18.51]から廻りのMy Lifづ 糾纏不清的\n")
+    os.utime(old, (1_400_000_000, 1_400_000_000))
+    write(tmp_path / "Mr.Children_All_by_myself.lrc", "[00:01.00]Mr.Children All by myself\n[00:18.51]から廻りのMy Life\n")
+    f = LyricsFolder([tmp_path])
+    paths = f.find("Mr.Children", "All by myself")
+    assert {p.name for p in paths} == {old.name, "Mr.Children_All_by_myself.lrc"}
+    ly = f.load(paths, "All by myself", 300000, "Mr.Children")
+    assert [l.text for l in ly.main.lines] == ["から廻りのMy Life"]    # 新しいほう・「アーティスト 曲名」の行は落とす

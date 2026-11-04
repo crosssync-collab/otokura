@@ -1,4 +1,6 @@
 """歌詞フォルダ(「アーティスト - 曲名.lrc / .txt / .ttml」が並ぶフォルダ)から探す。
+「アーティスト_曲名」「アーティスト曲名」のように区切りが違う名前も、空白と記号を除いてつなげた名前で合わせる。
+同じ種類のファイルが複数あるときは、更新時刻の新しいものを使う(直したファイルを別名で置いたとき)。
 
 音楽ファイルの横(サイドカー)とタグに歌詞が無い曲だけ使う。
 名前は大文字小文字・全角半角・空白と記号の違いを無視して比べ、曲名の (Live) [Remaster] などの括弧書きは
@@ -31,7 +33,12 @@ def norm(s: str | None) -> str:
 def _keys(artist: str, title: str) -> set[str]:
     arts = {norm(artist), norm(_FEAT.sub("", artist))}
     titles = {norm(title), norm(_BRACKETS.sub("", title))}
-    return {f"{a}\0{t}" for a in arts for t in titles if a and t}
+    return {f"{a}\0{t}" for a in arts for t in titles if a and t} | {f"\1{a}{t}" for a in arts for t in titles if a and t}
+
+
+def _joined_keys(stem: str) -> set[str]:
+    """区切りが「 - 」でない名前用: 空白・記号を除いてつなげた名前(括弧書きの有無も)。"""
+    return {f"\1{k}" for k in (norm(stem), norm(_BRACKETS.sub("", stem))) if k}
 
 
 class LyricsFolder:
@@ -61,9 +68,7 @@ class LyricsFolder:
                 if p.suffix.lower() not in SIDECAR_EXT or not p.is_file():
                     continue
                 artist, sep, title = p.stem.partition(" - ")
-                if not sep:
-                    continue
-                for k in _keys(artist, title):
+                for k in (_keys(artist, title) if sep else set()) | _joined_keys(p.stem):
                     index.setdefault(k, []).append(p)
         self.index = index
 
@@ -91,7 +96,12 @@ class LyricsFolder:
     def load(self, paths: list[Path], title: str | None, track_ms: int | None = None,
              artist: str | None = None) -> Lyrics | None:
         cands = []
-        for p in paths:
+        def mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                return 0.0
+        for p in sorted(paths, key=mtime, reverse=True):   # 同じ種類なら新しいほうが選ばれる(best は先頭を優先)
             ly = parse_file(p, track_ms)
             if ly is None:
                 continue
@@ -104,7 +114,8 @@ class LyricsFolder:
 def _strip_header(ly: Lyrics, title: str | None, artist: str | None = None) -> None:
     """先頭にある「曲名」「歌手名」「作詞 ○○」「Album: ○○」などの行を落とす(同期ありの .lrc にもある)。"""
     lines = ly.main.lines if ly.main else []
-    names = {norm(title), norm(_BRACKETS.sub("", title or "")), norm(artist)} - {""}
+    names = {norm(title), norm(_BRACKETS.sub("", title or "")), norm(artist),
+             norm((artist or "") + (title or "")), norm((title or "") + (artist or ""))} - {""}   # 「Mr.Children All by myself」も
 
     def is_header(text: str) -> bool:
         return not text or norm(text) in names or norm(_BRACKETS.sub("", text)) in names or bool(_CREDIT.match(text))
