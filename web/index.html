@@ -347,9 +347,12 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xp.wide.lyrfull .ll{text-align:center;transform-origin:center}
 .xp.wide.lyrfull .gap{justify-content:center}
 /* 全画面の歌詞: ジャケットをぼかして薄く敷く(文字が読める濃さ) */
-.xp.wide.lyrfull .in::before{content:"";position:absolute;inset:0;background:var(--xbg);filter:blur(28px) saturate(1.3);transform:scale(1.15);opacity:.32;z-index:-1;pointer-events:none}
-:root[data-theme="dark"] .xp.wide.lyrfull .in::before{opacity:.38}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .xp.wide.lyrfull .in::before{opacity:.38}}
+.xp.wide.lyrfull .in::before{content:"";position:absolute;inset:0;background:var(--xbg);filter:blur(6px) saturate(1.15);transform:scale(1.04);opacity:.5;z-index:-1;pointer-events:none}
+:root[data-theme="dark"] .xp.wide.lyrfull .in::before{opacity:.55}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .xp.wide.lyrfull .in::before{opacity:.55}}
+/* ジャケットが見える分、歌詞と下のバーに背景色のふちを付けて読みやすくする */
+.xp.wide.lyrfull .lyr{filter:drop-shadow(0 0 3px var(--bg)) drop-shadow(0 0 10px var(--bg))}
+.xp.wide.lyrfull .lfinfo{filter:drop-shadow(0 0 4px var(--bg))}
 .xp.wide.lyrfull .in{overflow:hidden;isolation:isolate}
 /* 低い画面(スマホの横向き)では操作を小さめに */
 @media (max-height:600px){
