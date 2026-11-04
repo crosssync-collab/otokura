@@ -7,12 +7,13 @@
 | ファイル | 役割 |
 | --- | --- |
 | `otokura/lyrics/model.py` | 内部形式(行・語・歌い手・バックボーカル・レイヤー)。OpenSubsonic songLyrics v2 に寄せた形 |
-| `otokura/lyrics/lrc.py` | LRC / Enhanced LRC(語の時刻)/ `v1:` `v2:` 歌い手 / `[bg:]` / `[offset:]` / 同時刻 2 行目を訳として分離 |
+| `otokura/lyrics/lrc.py` | LRC / Enhanced LRC(語の時刻)/ `v1:` `v2:` 歌い手 / `[bg:]` / `[offset:]` / 同時刻 2 行目を訳として分離 / 空白行は段落の区切り(待機の行)として残す |
 | `otokura/lyrics/ttml.py` | TTML(Apple 形式の歌い手・x-bg・訳/読みを含む) |
 | `otokura/lyrics/tags.py` | 埋め込みタグ(ID3 SYLT/USLT、Vorbis LYRICS、MP4 ©lyr、APEv2) |
 | `otokura/lyrics/encoding.py` | ファイルの文字コード判定、CP932 文字化けの修復 |
 | `otokura/lyrics/resolver.py` | 同名サイドカーとタグから最良の歌詞を選ぶ(同期あり > 語の時刻あり > .ttml > .lrc > タグ > .txt) |
-| `otokura/lyrics/store.py` | SQLite 保存。手動 > 手元 > LRCLIB の順で表示。ずれ補正。ファイル更新時刻で差分更新 |
+| `otokura/lyrics/store.py` | SQLite 保存。手動 > 手元 > 歌詞フォルダ > LRCLIB の順で表示。ずれ補正。ファイル更新時刻で差分更新。手動の歌詞は 1 つ前の版を残す |
+| `otokura/lyrics/folder.py` | 歌詞フォルダ(`アーティスト - 曲名.lrc` など。区切りが違う名前も、つなげた名前で合わせる。同じ種類なら新しいファイル) |
 | `otokura/lyrics/lrclib.py` | LRCLIB 取得(長さが 2 秒以上違う候補は捨てる。見つからない曲は 30 日待つ) |
 | `otokura/lyrics/api.py` | FastAPI ルーター |
 
