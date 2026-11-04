@@ -550,8 +550,11 @@ const APPEARS={'水無月 凪':[5]};
 let GENRES=[...new Set(AL.map(a=>a.g))];
 const GH={'アンビエント':200,'ジャズ':35,'エレクトロニカ':310,'ソウル':20,'フォーク':140,'インディーロック':350};
 let artists=[...new Set(AL.map(a=>a.a))];
-const decadeOf=a=>Math.floor(a.y/10)*10;
-let DECADES=[...new Set(AL.map(decadeOf))].sort();
+const decadeOf=a=>a.y>=1900?Math.floor(a.y/10)*10:null;   // 1900 年より前(「5」など年の書き間違い)は年代に入れない
+let DECADES=[...new Set(AL.map(decadeOf))].filter(Boolean).sort();
+// ミックスのジャケット(web/mix/*.jpg。Unsplash の写真を 2 色に染めて文字を載せたもの)。無い年代は色の模様
+const MIX_ART=new Set(['personal','track','album','1960','1970','1980','1990','2000','2010','2020']);
+const mixBg=(key,id,h)=>MIX_ART.has(String(key))?`url('mix/${key}.jpg') center/cover no-repeat,${cvBg(id,h)}`:cvBg(id,h);
 const OUTS=[
  ['browser','このブラウザ','Webダッシュボードを開いている端末','browser',true,'直接再生できる形式すべて'],
  ['nest','リビングの Nest Audio','Google スピーカー','cast',true,'FLAC 24/96 まで'],
@@ -665,11 +668,11 @@ function pageHome(){
   const rand=st.rand.map(i=>AL[i]).filter(visAl);
   const quick=shuffle(vs.filter(s=>s.fav)).slice(0,8);
   const s=cur(),al=s?alOf(s):{h:202};
-  const mixCard=(act,attrs,id,h,t,sub)=>`<button class="card" data-act="${act}" ${attrs}><div class="cover" style="background:${cvBg(id,h)}"></div><b>${t}</b><small>${sub}</small></button>`;
-  const mixes=mixCard('mixPersonal','',2,202,'パーソナルミックス','よく聴くジャンルとアーティスト')
-    +mixCard('mixTrack','',0,al.h,'曲ミックス','ライブラリ全体から曲を選びます')
-    +mixCard('mixAlbum','',1,(al.h+40)%360,'アルバムミックス','アルバムをまるごと並べます')
-    +DECADES.map((d,i)=>mixCard('mixDecade',`data-d="${d}"`,i,[200,35,310,140][i%4],`${d}年代ミックス`,`${vs.filter(x=>decadeOf(alOf(x))===d).length} 曲`)).join('');
+  const mixCard=(act,attrs,key,id,h,t,sub)=>`<button class="card" data-act="${act}" ${attrs}><div class="cover" style="background:${mixBg(key,id,h)}"></div><b>${t}</b><small>${sub}</small></button>`;
+  const mixes=mixCard('mixPersonal','','personal',2,202,'パーソナルミックス','よく聴くジャンルとアーティスト')
+    +mixCard('mixTrack','','track',0,al.h,'曲ミックス','ライブラリ全体から曲を選びます')
+    +mixCard('mixAlbum','','album',1,(al.h+40)%360,'アルバムミックス','アルバムをまるごと並べます')
+    +DECADES.map((d,i)=>mixCard('mixDecade',`data-d="${d}"`,d,i,[200,35,310,140][i%4],`${d}年代ミックス`,`${vs.filter(x=>decadeOf(alOf(x))===d).length} 曲`)).join('');
   return `<div class="sc ${S.hs==='grid'?'':S.hs}">${sc1.map(x=>btn(...x)).join('')}</div>
    <div class="sc ${S.hs==='grid'?'':S.hs}" style="margin-top:-6px">${sc2.map(x=>btn(...x)).join('')}</div>
    ${hr(S.h_mixes,'ミックス',`<div class="shelf">${mixes}</div>`)}
@@ -782,7 +785,7 @@ function pageGenre(g){
 }
 function pageDecade(d){
   const als=AL.filter(a=>decadeOf(a)===+d&&visAl(a)),ids=als.flatMap(a=>songsOfAl(a.id).map(s=>s.id)),c=cx(ids);
-  return {title:d+'年代',back:true,html:`<div class="dh"><div class="tile" style="background:${cvBg(1,[200,35,310,140][DECADES.indexOf(+d)%4])};aspect-ratio:1;font-size:15px">${d}年代</div><div><h1>${d}年代</h1><div class="muted">${als.length} アルバム ・ ${ids.length} 曲</div></div></div>
+  return {title:d+'年代',back:true,html:`<div class="dh"><div class="tile" style="background:${mixBg(d,1,[200,35,310,140][DECADES.indexOf(+d)%4])};aspect-ratio:1;font-size:15px">${MIX_ART.has(String(d))?'':d+'年代'}</div><div><h1>${d}年代</h1><div class="muted">${als.length} アルバム ・ ${ids.length} 曲</div></div></div>
    ${ids.length?actBar(c,d+'年代ミックス'):''}<div class="grid">${als.map(albumCard).join('')}</div>`};
 }
 
@@ -1953,7 +1956,7 @@ function fmtLabel(t){
 function deriveLibrary(){
   GENRES=[...new Set(AL.map(a=>a.g).filter(Boolean))];GENRES.forEach(g=>{if(GH[g]==null)GH[g]=hashHue(g);});
   artists=[...new Set(AL.map(a=>a.a))];
-  DECADES=[...new Set(AL.filter(a=>a.y).map(decadeOf))].sort();
+  DECADES=[...new Set(AL.map(decadeOf))].filter(Boolean).sort();
 }
 async function loadLibrary(){
   const d=await api('/api/library');

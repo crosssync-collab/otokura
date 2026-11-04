@@ -155,3 +155,6 @@ def test_pwa_files(client):
     assert "javascript" in sw.headers["content-type"] and sw.headers["cache-control"] == "no-cache"
     assert c.get("/icon-192.png").headers["content-type"] == "image/png"
     assert c.get("/index.html").status_code == 404 and c.get("/nothing.png").status_code == 404
+    # ミックスのジャケット
+    assert c.get("/mix/1980.jpg").headers["content-type"] == "image/jpeg"
+    assert c.get("/mix/credits.json").status_code == 404 and c.get("/mix/..%2Fapp.py").status_code == 404

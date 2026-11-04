@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import re
+
 import json
 import logging
 import platform
@@ -295,6 +297,14 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     web_files = {"manifest.webmanifest": "application/manifest+json", "sw.js": "text/javascript",
                  "icon.svg": "image/svg+xml", "icon-192.png": "image/png", "icon-512.png": "image/png",
                  "icon-180.png": "image/png"}
+
+    # ミックスのジャケット(web/mix/*.jpg)
+    @app.get("/mix/{name}", include_in_schema=False)
+    def mix_art(name: str):
+        p = cfg.web_dir / "mix" / name if cfg.web_dir and re.fullmatch(r"[a-z0-9]+\.jpg", name) else None
+        if not p or not p.is_file():
+            raise HTTPException(404)
+        return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
 
     @app.get("/{name}", include_in_schema=False)
     def web_file(name: str):
