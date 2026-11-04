@@ -1997,7 +1997,7 @@ async function loadLibrary(){
   d.tracks.forEach(r=>{const t=C(d.trackColumns,r),ai=aIdx.get(t.albumId);if(ai==null)return;const al=AL[ai];
     const s={id:SONGS.length,dbid:t.id,al:ai,n:t.no||al.tr.length+1,disc:t.disc||1,t:t.title,ar:t.artist,d:Math.max(1,Math.round(t.durationMs/1000)),
       plays:t.plays,fav:!!t.fav,rating:t.rating,ago:t.lastPlayed?Math.floor((d.now-t.lastPlayed)/86400):999,last:t.lastPlayed||0,skips:t.skips,
-      codec:t.codec,playable:PLAYABLE.includes(t.codec),rel:t.rel,src:t.source,fmt:fmtLabel(t)};
+      codec:t.codec,sr:t.sampleRate||0,playable:PLAYABLE.includes(t.codec),rel:t.rel,src:t.source,fmt:fmtLabel(t)};
     SONGS.push(s);al.tr.push(s.id);if(!al.f)al.f=s.fmt;
     if(t.artist!==al.a&&al.a!=='Various Artists'){const l=APPEARS[t.artist]=APPEARS[t.artist]||[];if(!l.includes(ai))l.push(ai);}
   });
@@ -2130,9 +2130,10 @@ function castConnected(on){
 function castLoad(s,pos,play){
   if(!castS||!s)return;
   if(s.local){toast('この端末の曲は Cast できないので、次の曲へ進みます');setTimeout(()=>step(1,true),0);return;}
-  const mime=TRANSCODE[s.codec]?(TRANSCODE[s.codec]==='AAC'?'audio/mp4':'audio/flac'):CAST_MIME[s.codec];   // 変換するものは変換後の形式で送る
+  // 変換するもの・48kHz を超えるもの(Cast 向けに 48kHz の FLAC にする)は変換後の形式で送る
+  const mime=TRANSCODE[s.codec]==='AAC'?'audio/mp4':TRANSCODE[s.codec]||s.sr>48000?'audio/flac':CAST_MIME[s.codec];
   if(!s.playable||!mime){toast(`${s.codec} は Cast で再生できないので、次の曲へ進みます`);setTimeout(()=>step(1,true),0);return;}
-  const al=alOf(s),base=castBase(),url=`${base}/api/tracks/${s.dbid}/stream`;
+  const al=alOf(s),base=castBase(),url=`${base}/api/tracks/${s.dbid}/stream?cast=1`;
   const mi=new chrome.cast.media.MediaInfo(url,mime),md=new chrome.cast.media.MusicTrackMediaMetadata();
   md.title=s.t;md.artist=s.ar||al.a;md.albumName=al.t;
   if(al.art)md.images=[new chrome.cast.Image(`${base}/api/art/${al.dbid}?size=1000&v=${al.artv||''}`)];

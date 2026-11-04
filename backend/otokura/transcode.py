@@ -2,6 +2,7 @@
 
 - 可逆(ALAC・AIFF・APE・TTA・WavPack・DSD)は FLAC に、非可逆(WMA・MPC)は AAC 256kbps(m4a)にする
 - DSD は PCM 24bit・88.2kHz にする(ブラウザも Chromecast も DSD は鳴らせない)
+- Chromecast に送るときは 48kHz を超える曲(ハイレゾ・DSD)を 24bit・48kHz の FLAC にする(機器によって鳴らないため)
 - 一度変換したものは data/transcode に残し、2 回目からはすぐ配る(途中から再生=Range も効く)。
   元のファイルが変わったら(更新時刻・大きさ)別のものとして作り直す。合計が上限を超えたら古いものから消す
 """
@@ -36,17 +37,17 @@ class Transcoder:
     def available(self) -> bool:
         return bool(self.ffmpeg)
 
-    def cache_path(self, src: Path, codec: str) -> Path:
+    def cache_path(self, src: Path, codec: str, cast: bool = False) -> Path:
         st = src.stat()
-        key = hashlib.sha1(f"{src}\0{st.st_mtime_ns}\0{st.st_size}".encode("utf-8")).hexdigest()[:24]
+        key = hashlib.sha1(f"{src}\0{st.st_mtime_ns}\0{st.st_size}\0{'cast' if cast else ''}".encode("utf-8")).hexdigest()[:24]
         return self.dir / (key + target(codec)[1])
 
-    def ready(self, src: Path, codec: str) -> bool:
-        return self.cache_path(src, codec).is_file()
+    def ready(self, src: Path, codec: str, cast: bool = False) -> bool:
+        return self.cache_path(src, codec, cast).is_file()
 
-    def get(self, src: Path, codec: str) -> Path:
-        """変換したファイルのパス(無ければ変換してから返す)。"""
-        dst = self.cache_path(src, codec)
+    def get(self, src: Path, codec: str, cast: bool = False) -> Path:
+        """変換したファイルのパス(無ければ変換してから返す)。cast=True は Chromecast 向け(48kHz まで)。"""
+        dst = self.cache_path(src, codec, cast)
         while True:
             if dst.is_file():
                 try:
@@ -65,26 +66,26 @@ class Transcoder:
                     raise RuntimeError("変換できませんでした")
                 continue
             try:
-                self._run(src, dst, codec)
+                self._run(src, dst, codec, cast)
             finally:
                 with self.lock:
                     self.busy.pop(dst.name, None)
                 ev.set()
             self._prune()
 
-    def prepare(self, src: Path, codec: str) -> None:
+    def prepare(self, src: Path, codec: str, cast: bool = False) -> None:
         """次の曲を先に変換しておく(裏で動かす)。"""
-        if self.ready(src, codec):
+        if self.ready(src, codec, cast):
             return
-        threading.Thread(target=lambda: self._quiet_get(src, codec), daemon=True).start()
+        threading.Thread(target=lambda: self._quiet_get(src, codec, cast), daemon=True).start()
 
-    def _quiet_get(self, src: Path, codec: str) -> None:
+    def _quiet_get(self, src: Path, codec: str, cast: bool) -> None:
         try:
-            self.get(src, codec)
+            self.get(src, codec, cast)
         except Exception:
             pass
 
-    def _run(self, src: Path, dst: Path, codec: str) -> None:
+    def _run(self, src: Path, dst: Path, codec: str, cast: bool = False) -> None:
         if not self.ffmpeg:
             raise RuntimeError("ffmpeg がありません")
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -93,8 +94,10 @@ class Transcoder:
         if codec in LOSSY:
             cmd += ["-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", "-f", "mp4"]
         else:
-            if codec == "DSD":
-                cmd += ["-ar", "88200", "-sample_fmt", "s32"]
+            if cast:
+                cmd += ["-ar", "48000", "-sample_fmt", "s32", "-bits_per_raw_sample", "24"]
+            elif codec == "DSD":
+                cmd += ["-ar", "88200", "-sample_fmt", "s32", "-bits_per_raw_sample", "24"]
             cmd += ["-c:a", "flac", "-compression_level", "5", "-f", "flac"]
         r = subprocess.run(cmd + [str(tmp)], capture_output=True, timeout=TIMEOUT_S)
         if r.returncode != 0 or not tmp.is_file() or tmp.stat().st_size == 0:

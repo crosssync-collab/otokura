@@ -24,7 +24,7 @@ from .lyrics.folder import LyricsFolder
 from .lyrics.lrclib import LrcLib
 from .lyrics.store import LyricsStore, TrackRef
 from .tag_api import make_router as tag_router
-from .transcode import Transcoder, CODECS as TRANSCODE_CODECS, target as transcode_target
+from .transcode import Transcoder, CODECS as TRANSCODE_CODECS, LOSSY as TRANSCODE_LOSSY, target as transcode_target
 from .scanner import Scanner, Scheduler
 
 log = logging.getLogger("otokura")
@@ -114,13 +114,21 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         }
 
     @app.get("/api/tracks/{tid}/stream")
-    def stream(tid: int, direct: bool = False):
-        """曲を配る。ブラウザが鳴らせない形式は変換したものを配る(direct=1 は、その端末がそのまま鳴らせると言うとき。Safari の ALAC など)。"""
+    def stream(tid: int, direct: bool = False, cast: bool = False):
+        """曲を配る。ブラウザが鳴らせない形式は変換したものを配る(direct=1 は、その端末がそのまま鳴らせると言うとき。Safari の ALAC など)。
+        cast=1 は Chromecast 向け: 48kHz を超える曲(ハイレゾ・DSD)は 24bit・48kHz の FLAC にする。"""
         r = track_row(tid)
         p = track_path(r)
         if not p.is_file():
             raise HTTPException(404, "ファイルが見つかりません。再スキャンしてください")
         codec = r["codec"]
+        hires = cast and codec not in TRANSCODE_LOSSY and ((r["sample_rate"] or 0) > 48000 or codec == "DSD")
+        if hires and tc.available:
+            try:
+                out = tc.get(p, codec, cast=True)
+            except Exception as e:
+                raise HTTPException(500, f"Cast 向けに変換できませんでした: {e}")
+            return FileResponse(out, media_type="audio/flac", headers={"Cache-Control": "private, max-age=3600"})
         if codec in metadata.BROWSER_PLAYABLE or (direct and codec in metadata.MIME):
             return FileResponse(p, media_type=metadata.MIME.get(codec, "application/octet-stream"),
                                 headers={"Cache-Control": "private, max-age=3600"})

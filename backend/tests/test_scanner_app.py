@@ -195,3 +195,32 @@ def test_transcode_formats_cache_and_direct(tmp_path):
     assert r.headers["content-type"] == "audio/mp4" and b"ftyp" in r.content[:12]
     # AIFF も変換の対象(Chrome は鳴らせない)
     assert c.post(f"/api/tracks/{by['AIFF']['id']}/prepare").json()["needed"]
+
+
+def test_cast_hires_is_downsampled(tmp_path):
+    from mutagen.flac import FLAC
+    from otokura.app import create_app
+    from otokura.config import Config, Source
+    from conftest import make_audio
+    import subprocess
+    m = tmp_path / "m"
+    p = m / "A" / "B" / "01 hires.flac"
+    p.parent.mkdir(parents=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=96000", "-t", "2",
+                    "-sample_fmt", "s32", "-bits_per_raw_sample", "24", str(p)], check=True)
+    make_audio(m / "A" / "B" / "02 cd.flac")
+    cfg = Config(sources=[Source("m", "M", m)], data_dir=tmp_path / "data", scan_at=None, scan_on_start=False, lrclib=False)
+    app = create_app(cfg, start_background=False)
+    app.state.scanner.run()
+    c = TestClient(app)
+    d = c.get("/api/library").json()
+    by = {r[d["trackColumns"].index("title")]: r[0] for r in d["tracks"]}
+    # ブラウザには元の 96kHz のまま
+    out = tmp_path / "x.flac"
+    out.write_bytes(c.get(f"/api/tracks/{by['hires']}/stream").content)
+    assert FLAC(out).info.sample_rate == 96000
+    # Cast には 48kHz・24bit
+    out.write_bytes(c.get(f"/api/tracks/{by['hires']}/stream?cast=1").content)
+    assert FLAC(out).info.sample_rate == 48000 and FLAC(out).info.bits_per_sample == 24
+    # 48kHz 以下はそのまま
+    assert c.get(f"/api/tracks/{by['cd']}/stream?cast=1").content == (m / "A" / "B" / "02 cd.flac").read_bytes()
