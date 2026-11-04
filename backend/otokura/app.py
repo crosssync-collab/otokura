@@ -24,6 +24,7 @@ from .lyrics.folder import LyricsFolder
 from .lyrics.lrclib import LrcLib
 from .lyrics.store import LyricsStore, TrackRef
 from .tag_api import make_router as tag_router
+from .transcode import Transcoder, CODECS as TRANSCODE_CODECS, target as transcode_target
 from .scanner import Scanner, Scheduler
 
 log = logging.getLogger("otokura")
@@ -36,11 +37,15 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     lyrics = LyricsStore(cfg.db_path, lrclib=LrcLib() if cfg.lrclib else None,
                          folder=LyricsFolder(cfg.lyrics_dirs) if cfg.lyrics_dirs else None)
     scanner = Scanner(db, cfg, lyrics)
+    tc = Transcoder(cfg.data_dir / "transcode", int(cfg.transcode_max_gb * 1024 ** 3))
     src_by_id = {s.id: s for s in cfg.sources}
 
     app = FastAPI(title="音蔵", version=__version__, docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.add_middleware(GZipMiddleware, minimum_size=2048)
-    app.state.cfg, app.state.db, app.state.scanner, app.state.lyrics = cfg, db, scanner, lyrics
+    app.state.cfg, app.state.db, app.state.scanner, app.state.lyrics, app.state.transcoder = cfg, db, scanner, lyrics, tc
+    # 鳴らせる形式 = ブラウザがそのまま鳴らせるもの + ffmpeg で変換するもの
+    def playable_codecs() -> set[str]:
+        return metadata.BROWSER_PLAYABLE | (TRANSCODE_CODECS if tc.available else set())
 
     def bump():
         db.meta("library_version", str(time.time()))
@@ -98,7 +103,8 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "version": ver,
             "now": time.time(),
             "sources": [{"id": s.id, "name": s.name, "path": str(s.path)} for s in cfg.sources],
-            "playable": sorted(metadata.BROWSER_PLAYABLE),
+            "playable": sorted(playable_codecs()),
+            "transcode": {c: transcode_target(c)[0] for c in sorted(TRANSCODE_CODECS)} if tc.available else {},
             "albumColumns": ["id", "title", "artist", "year", "genre", "source", "folder", "hasArt", "hue", "addedAt", "art"],
             "albums": [list(r) for r in albums],
             "trackColumns": ["id", "albumId", "disc", "no", "title", "artist", "durationMs", "codec", "sampleRate",
@@ -108,15 +114,38 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         }
 
     @app.get("/api/tracks/{tid}/stream")
-    def stream(tid: int):
+    def stream(tid: int, direct: bool = False):
+        """曲を配る。ブラウザが鳴らせない形式は変換したものを配る(direct=1 は、その端末がそのまま鳴らせると言うとき。Safari の ALAC など)。"""
         r = track_row(tid)
-        if r["codec"] not in metadata.BROWSER_PLAYABLE:
-            raise HTTPException(415, f"{r['codec']} の再生は次の段階(変換配信)で対応します")
         p = track_path(r)
         if not p.is_file():
             raise HTTPException(404, "ファイルが見つかりません。再スキャンしてください")
-        return FileResponse(p, media_type=metadata.MIME.get(r["codec"], "application/octet-stream"),
-                            headers={"Cache-Control": "private, max-age=3600"})
+        codec = r["codec"]
+        if codec in metadata.BROWSER_PLAYABLE or (direct and codec in metadata.MIME):
+            return FileResponse(p, media_type=metadata.MIME.get(codec, "application/octet-stream"),
+                                headers={"Cache-Control": "private, max-age=3600"})
+        if codec not in TRANSCODE_CODECS or not tc.available:
+            raise HTTPException(415, f"{codec} は再生できません(変換に使う ffmpeg がありません)")
+        try:
+            out = tc.get(p, codec)
+        except Exception as e:
+            raise HTTPException(500, f"{codec} を変換できませんでした: {e}")
+        return FileResponse(out, media_type=transcode_target(codec)[2], headers={"Cache-Control": "private, max-age=3600"})
+
+    @app.post("/api/tracks/{tid}/prepare")
+    def prepare(tid: int):
+        """次の曲が変換の要る形式なら、先に変換を始めておく(曲の切り替えで待たないように)。"""
+        r = track_row(tid)
+        codec = r["codec"]
+        if codec in metadata.BROWSER_PLAYABLE or codec not in TRANSCODE_CODECS or not tc.available:
+            return {"needed": False, "ready": True}
+        p = track_path(r)
+        if not p.is_file():
+            raise HTTPException(404, "ファイルが見つかりません")
+        ready = tc.ready(p, codec)
+        if not ready:
+            tc.prepare(p, codec)
+        return {"needed": True, "ready": ready}
 
     @app.get("/api/art/{album_id}")
     def album_art(album_id: int, size: int = 300):
@@ -261,8 +290,11 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "lastScan": float(last) if last else None,
             "scanAt": cfg.scan_at,
             "scan": scanner.state.public(),
-            "codecs": [{"codec": r["codec"], "tracks": r["n"], "playable": r["codec"] in metadata.BROWSER_PLAYABLE}
+            "codecs": [{"codec": r["codec"], "tracks": r["n"], "playable": r["codec"] in playable_codecs(),
+                        "transcode": transcode_target(r["codec"])[0]
+                        if r["codec"] in TRANSCODE_CODECS and r["codec"] not in metadata.BROWSER_PLAYABLE else None}
                        for r in unplayable],
+            "ffmpeg": tc.available,
             "lrclib": cfg.lrclib,
             "castUrl": cfg.cast_url,
             "dataDir": str(cfg.data_dir),

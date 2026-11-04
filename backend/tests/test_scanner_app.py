@@ -68,8 +68,8 @@ def test_stream_range_and_art(client):
     r = c.get(f"/api/tracks/{t['id']}/stream", headers={"Range": "bytes=0-99"})
     assert r.status_code == 206 and len(r.content) == 100 and r.headers["content-type"] == "audio/flac"
     tta = next(x for x in tracks if x["codec"] == "TTA")
-    r = c.get(f"/api/tracks/{tta['id']}/stream")
-    assert r.status_code == 415 and "次の段階" in r.json()["detail"]
+    r = c.get(f"/api/tracks/{tta['id']}/stream")              # FLAC に変換して配る
+    assert r.status_code == 200 and r.headers["content-type"] == "audio/flac" and r.content[:4] == b"fLaC"
     a = next(x for x in albums if x["hasArt"])
     r = c.get(f"/api/art/{a['id']}?size=1000")
     assert r.status_code == 200 and r.content[:2] == b"\xff\xd8"
@@ -140,7 +140,8 @@ def test_server_and_index(client):
     c, _ = client
     s = c.get("/api/server").json()
     assert [x["tracks"] for x in s["sources"]] == [4, 1]
-    assert {x["codec"]: x["playable"] for x in s["codecs"]}["TTA"] is False
+    tta = next(x for x in s["codecs"] if x["codec"] == "TTA")
+    assert tta["playable"] and tta["transcode"] == "FLAC" and s["ffmpeg"]
     html = c.get("/").text
     assert "window.OTOKURA_API=''" in html and "<title>音蔵</title>" in html
 
@@ -158,3 +159,39 @@ def test_pwa_files(client):
     # ミックスのジャケット
     assert c.get("/mix/1980.jpg").headers["content-type"] == "image/jpeg"
     assert c.get("/mix/credits.json").status_code == 404 and c.get("/mix/..%2Fapp.py").status_code == 404
+
+
+def test_transcode_formats_cache_and_direct(tmp_path):
+    from otokura.app import create_app
+    from otokura.config import Config, Source
+    from conftest import make_audio
+    m = tmp_path / "m"
+    make_audio(m / "A" / "B" / "01 alac.m4a", codec_args=("-c:a", "alac"))
+    make_audio(m / "A" / "B" / "02 wma.wma", codec_args=("-c:a", "wmav2"))
+    make_audio(m / "A" / "B" / "03 aiff.aiff")
+    cfg = Config(sources=[Source("m", "M", m)], data_dir=tmp_path / "data", scan_at=None, scan_on_start=False, lrclib=False)
+    app = create_app(cfg, start_background=False)
+    app.state.scanner.run()
+    c = TestClient(app)
+    d = c.get("/api/library").json()
+    tracks = [dict(zip(d["trackColumns"], r)) for r in d["tracks"]]
+    by = {t["codec"]: t for t in tracks}
+    assert set(by) == {"ALAC", "WMA", "AIFF"} and {"ALAC", "WMA", "AIFF"} <= set(d["playable"])
+    assert d["transcode"]["WMA"] == "AAC" and d["transcode"]["ALAC"] == "FLAC"
+    # 先に変換を始める → 変換済みになる
+    assert c.post(f"/api/tracks/{by['ALAC']['id']}/prepare").json()["needed"]
+    r = c.get(f"/api/tracks/{by['ALAC']['id']}/stream")
+    assert r.headers["content-type"] == "audio/flac" and r.content[:4] == b"fLaC"
+    assert c.post(f"/api/tracks/{by['ALAC']['id']}/prepare").json()["ready"]
+    # 2 回目は残したものから。途中から(Range)も効く
+    r = c.get(f"/api/tracks/{by['ALAC']['id']}/stream", headers={"Range": "bytes=0-9"})
+    assert r.status_code == 206 and len(r.content) == 10
+    assert len(list((tmp_path / "data" / "transcode").glob("*.flac"))) == 1
+    # 非可逆は AAC
+    r = c.get(f"/api/tracks/{by['WMA']['id']}/stream")
+    assert r.headers["content-type"] == "audio/mp4" and b"ftyp" in r.content[:12]
+    # その端末がそのまま鳴らせる(Safari の ALAC)ときは元のまま
+    r = c.get(f"/api/tracks/{by['ALAC']['id']}/stream?direct=1")
+    assert r.headers["content-type"] == "audio/mp4" and b"ftyp" in r.content[:12]
+    # AIFF も変換の対象(Chrome は鳴らせない)
+    assert c.post(f"/api/tracks/{by['AIFF']['id']}/prepare").json()["needed"]

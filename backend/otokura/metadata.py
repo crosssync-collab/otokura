@@ -10,10 +10,10 @@ from .lyrics.encoding import fix_mojibake
 
 AUDIO_EXT = {".flac", ".mp3", ".m4a", ".mp4", ".aac", ".ogg", ".oga", ".opus", ".wav", ".aif", ".aiff",
              ".ape", ".tta", ".wv", ".dsf", ".dff", ".mpc", ".wma"}
-# ブラウザがそのまま再生できる形式(これ以外は次の段階で変換配信する)
+# ブラウザがそのまま再生できる形式(これ以外は transcode.py で変換して配る)
 BROWSER_PLAYABLE = {"FLAC", "MP3", "AAC", "Vorbis", "Opus", "WAV"}
 MIME = {"FLAC": "audio/flac", "MP3": "audio/mpeg", "AAC": "audio/mp4", "ALAC": "audio/mp4", "Vorbis": "audio/ogg",
-        "Opus": "audio/ogg", "WAV": "audio/wav"}
+        "Opus": "audio/ogg", "WAV": "audio/wav", "AIFF": "audio/aiff"}   # ALAC・AIFF は Safari ならそのまま鳴る
 
 KEYS = {
     "title": ("title", "tit2", "\xa9nam"),

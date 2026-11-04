@@ -673,7 +673,7 @@ function songRow(s,cxi,i,o={}){
     <span class="du">${fmtT(s.d)}</span>
     <button class="ib sm" data-act="menu" data-k="song" data-id="${s.id}" aria-label="メニュー">${ico('more',20)}</button></div>`;
 }
-const chipsFor=(al,s)=>{if(LIVE&&s)return [s.fmt||s.codec,s.playable?'そのまま配信':'再生は次の段階で対応'];const ext=al.f.split(' ')[0];const nat=['FLAC','MP3','AAC'].includes(ext);return [al.f,nat?'そのまま配信':`${ext} → FLAC に変換`];};
+const chipsFor=(al,s)=>{if(LIVE&&s)return [s.fmt||s.codec,needsTc(s)?`${TRANSCODE[s.codec]} に変換して配信`:s.playable?'そのまま配信':'再生できません'];const ext=al.f.split(' ')[0];const nat=['FLAC','MP3','AAC'].includes(ext);return [al.f,nat?'そのまま配信':`${ext} → FLAC に変換`];};
 
 /* ================= pages ================= */
 function pageHome(){
@@ -1987,7 +1987,7 @@ async function loadLibrary(){
   const C=(cols,row)=>Object.fromEntries(cols.map((c,i)=>[c,row[i]]));
   const playingDb=cur()?cur().dbid:null,qDb=st.q.map(i=>SONGS[i]&&SONGS[i].dbid);
   AL.length=0;SONGS.length=0;for(const k in APPEARS)delete APPEARS[k];
-  PLAYABLE=d.playable;
+  PLAYABLE=d.playable;TRANSCODE=d.transcode||{};
   SRCS.length=0;d.sources.forEach(x=>{SRCS.push({id:x.id,name:x.name,path:x.path});if(st.src[x.id]==null)st.src[x.id]=true;});
   for(const k of Object.keys(st.src))if(!SRCS.some(x=>x.id===k))delete st.src[k];
   const aIdx=new Map();
@@ -2025,11 +2025,24 @@ function restoreQueue(){
 
 /* --- 再生 --- */
 let lt={dbid:null,listened:0,counted:false,ended:false,last:0},skipChain=0,switching=false;
+// NAS で変換して配る形式(ALAC・AIFF・APE・TTA・WavPack・DSD → FLAC、WMA・MPC → AAC)。
+// ALAC・AIFF は Safari ならそのまま鳴るので、鳴らせる端末には変換せずに送ってもらう(direct=1)
+let TRANSCODE={};const tcReady=new Set();
+const DIRECT_MIME={ALAC:'audio/mp4; codecs="alac"',AIFF:'audio/aiff'};
+const canDirect=s=>!!(DIRECT_MIME[s.codec]&&audio.canPlayType(DIRECT_MIME[s.codec]));
+const needsTc=s=>!!(s&&!s.local&&TRANSCODE[s.codec]&&!canDirect(s));
+function tcPrepare(s){   // 次の曲を先に変換しておく
+  if(!needsTc(s)||tcReady.has(s.dbid))return;
+  api(`/api/tracks/${s.dbid}/prepare`,{method:'POST'}).then(r=>{if(r.ready)tcReady.add(s.dbid);}).catch(()=>{});
+}
 function ensureSrc(){
   const s=cur();if(!s)return false;
-  if(!s.playable){toast(`${s.codec} の再生は次の段階(変換配信)で対応します`);return false;}
+  if(!s.playable){toast(`${s.codec} は再生できません`);return false;}
   if(s.local)return localSrc(s);
-  if(audio.dataset.dbid!==String(s.dbid)){switching=st.playing;audio.src=`${API}/api/tracks/${s.dbid}/stream`;audio.dataset.dbid=String(s.dbid);}
+  if(audio.dataset.dbid!==String(s.dbid)){switching=st.playing;
+    if(needsTc(s)&&!tcReady.has(s.dbid))toast(`${s.codec} を ${TRANSCODE[s.codec]} に変換しています(初めての曲だけ数秒かかります)`);
+    audio.src=`${API}/api/tracks/${s.dbid}/stream${canDirect(s)?'?direct=1':''}`;audio.dataset.dbid=String(s.dbid);tcReady.add(s.dbid);}
+  const nx=SONGS[st.q[st.qi+1]];if(nx)tcPrepare(nx);
   return true;
 }
 function liveOnTrack(){
@@ -2042,7 +2055,7 @@ function liveOnTrack(){
   if(!st.playing)return;
   if(!s.playable){
     if(++skipChain>=Math.min(st.q.length,20)){skipChain=0;setPlaying(false);toast('このキューには、いま再生できる曲がありません');return;}
-    toast(`${s.codec} は次の段階で再生できるようにします。次の曲へ進みます`);setTimeout(()=>step(1,true),0);return;
+    toast(`${s.codec} は再生できないので、次の曲へ進みます`);setTimeout(()=>step(1,true),0);return;
   }
   skipChain=0;
   if(castOn()){castLoad(s,0,true);return;}
@@ -2117,9 +2130,10 @@ function castConnected(on){
 function castLoad(s,pos,play){
   if(!castS||!s)return;
   if(s.local){toast('この端末の曲は Cast できないので、次の曲へ進みます');setTimeout(()=>step(1,true),0);return;}
-  if(!s.playable||!CAST_MIME[s.codec]){toast(`${s.codec} は Cast で再生できないので、次の曲へ進みます`);setTimeout(()=>step(1,true),0);return;}
+  const mime=TRANSCODE[s.codec]?(TRANSCODE[s.codec]==='AAC'?'audio/mp4':'audio/flac'):CAST_MIME[s.codec];   // 変換するものは変換後の形式で送る
+  if(!s.playable||!mime){toast(`${s.codec} は Cast で再生できないので、次の曲へ進みます`);setTimeout(()=>step(1,true),0);return;}
   const al=alOf(s),base=castBase(),url=`${base}/api/tracks/${s.dbid}/stream`;
-  const mi=new chrome.cast.media.MediaInfo(url,CAST_MIME[s.codec]),md=new chrome.cast.media.MusicTrackMediaMetadata();
+  const mi=new chrome.cast.media.MediaInfo(url,mime),md=new chrome.cast.media.MusicTrackMediaMetadata();
   md.title=s.t;md.artist=s.ar||al.a;md.albumName=al.t;
   if(al.art)md.images=[new chrome.cast.Image(`${base}/api/art/${al.dbid}?size=1000&v=${al.artv||''}`)];
   mi.metadata=md;mi.streamType=chrome.cast.media.StreamType.BUFFERED;
@@ -2357,7 +2371,7 @@ function livePage(sub){
     <p class="muted" style="font-size:13px;margin:14px 4px">NAS のフォルダの追加や変更は、NAS の docker-compose.yml にある <code>OTOKURA_SOURCES</code> とボリュームで行います。</p>
     ${localProvidersHtml()}`};
   if(sub==='outputs')return {title:'再生先',back:true,html:outListLive()};
-  if(sub==='formats')return {title:'形式と変換',back:true,html:`<div class="panel">${S.codecs.map(c=>`<div class="prow"><span class="tt"><b>${esc(c.codec)}</b><small>${c.tracks.toLocaleString()} 曲</small></span><span class="chip ${c.playable?'ok':''}">${c.playable?'直接再生':'次の段階で変換配信'}</span></div>`).join('')||'<div class="prow"><span class="tt">まだ曲がありません</span></div>'}</div>`};
+  if(sub==='formats')return {title:'形式と変換',back:true,html:`<div class="panel">${S.codecs.map(c=>`<div class="prow"><span class="tt"><b>${esc(c.codec)}</b><small>${c.tracks.toLocaleString()} 曲</small></span><span class="chip ${c.playable?'ok':''}">${c.transcode?`${c.transcode} に変換して配信`:c.playable?'そのまま再生':S.ffmpeg===false?'再生できません(ffmpeg がありません)':'再生できません'}</span></div>`).join('')||'<div class="prow"><span class="tt">まだ曲がありません</span></div>'}</div>`};
   return {title:'サーバー情報',back:true,html:`<div class="panel">${[['アプリのバージョン',S.version],['Python',S.python],['待ち受け',location.origin],['データフォルダ',S.dataDir+'(データベース、カバーの縮小画像)'],['歌詞の外部取得',S.lrclib?'LRCLIB(歌詞が無い曲だけ)':'使わない'],['前回のスキャン',ago(S.lastScan)]].map(r=>`<div class="prow"><span class="tt"><b>${r[0]}</b><small>${esc(r[1])}</small></span></div>`).join('')}</div>`};
 }
 function emptyLib(){
