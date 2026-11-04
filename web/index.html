@@ -312,8 +312,6 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .ctl{display:flex;align-items:center;justify-content:space-between}
 .ctl .ib{width:52px;height:52px}
 .ctl .ib.act{background:var(--pc);color:var(--on-pc)}
-.pbig{width:76px;height:76px;border-radius:28px;background:var(--pri);color:var(--on-pri);display:grid;place-items:center;transition:border-radius .2s}
-.pbig.playing{border-radius:38px}
 .xbot{display:flex;justify-content:space-around;margin-top:auto;padding-top:6px}
 .xbot button{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted);min-width:64px;padding:6px}
 .xbot button.on,.lfbtn.on{color:var(--pri)}
@@ -373,7 +371,6 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
   .xp.wide .stars button{width:30px;height:30px}
   .xp.wide .wave{height:36px}
   .xp.wide .ctl .ib{width:44px;height:44px}
-  .xp.wide .pbig{width:60px;height:60px;border-radius:22px}.xp.wide .pbig.playing{border-radius:30px}
 }
 /* アプリとして開いた横向き(上下にシステムの帯があり 300px 前後しかない)ではさらに詰める */
 @media (max-height:360px){
@@ -390,7 +387,6 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
   .xp.wide .stars svg{width:20px;height:20px}
   .xp.wide .wave{height:28px}
   .xp.wide .ctl .ib{width:40px;height:40px}
-  .xp.wide .pbig{width:50px;height:50px;border-radius:18px}.xp.wide .pbig.playing{border-radius:25px}
   .xp.wide .xbot button{padding:2px 6px;font-size:10px}
 }
 
@@ -1268,7 +1264,7 @@ function renderXP(){
     <div class="seek"><span id="tcur">0:00</span>${S.np_wave?`<div class="wave" id="wave" role="slider" tabindex="0" aria-label="再生位置" aria-valuemin="0" aria-valuemax="${s.d}" aria-valuenow="0">${waveBars(s.id*1.3+1)}</div>`:`<div class="line" id="wave" role="slider" tabindex="0" aria-label="再生位置" aria-valuemin="0" aria-valuemax="${s.d}" aria-valuenow="0"><i id="lnf"></i></div>`}<span>${fmtT(s.d)}</span></div>
     <div class="ctl"><button class="ib ${st.shuf?'act':''}" data-act="shufMode" aria-label="シャッフル" aria-pressed="${st.shuf}">${ico('shuffle',26)}</button>
       <button class="ib" data-act="prev" aria-label="前の曲">${ico('prev',34)}</button>
-      <button class="pbig ${st.playing?'playing':''}" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',38)}</button>
+      <button class="ib" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',38)}</button>
       <button class="ib" data-act="next" aria-label="次の曲">${ico('next',34)}</button>
       <button class="ib ${st.rep?'act':''}" data-act="repMode" aria-label="リピート" aria-pressed="${!!st.rep}">${ico(st.rep===2?'repeat1':'repeat',26)}</button></div>
     <div class="xbot"><button data-act="queueSheet">${ico('list')}<span>キュー</span></button>
