@@ -121,6 +121,15 @@ def read(path: Path) -> CueSheet | None:
     return parse(decode_bytes(data), path)
 
 
+def embedded(text: str | None, path: Path) -> tuple[CueSheet, list[CueTrack]] | None:
+    """タグに埋め込まれた CUE シート。FILE の名前は取り込む前の .wav のことが多いので、いちばん曲の多い FILE を使う。"""
+    if not text or "TRACK" not in text.upper():
+        return None
+    cs = parse(text, path)
+    best = max(cs.files.values(), key=len, default=[])
+    return (cs, best) if len(best) >= 2 else None
+
+
 class CueIndex:
     """フォルダごとに .cue を読んでおき、音声ファイルに当てはまる曲を返す(1 回のスキャンの間だけ使う)。"""
 

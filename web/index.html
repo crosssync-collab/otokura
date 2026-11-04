@@ -400,7 +400,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xp.wide.lyrfull .ll{text-align:center;transform-origin:center}
 .xp.wide.lyrfull .gap{justify-content:center}
 /* 歌詞を出しているとき(通常・全画面とも): 画面の背景にジャケットをぼかして敷く */
-.xp.lyron::before{background:var(--xbg);filter:blur(6px) saturate(1.15);transform:scale(1.04);opacity:.5;animation:none}
+.xp.lyron::before{background:var(--xbg);filter:blur(6px) saturate(1.15);transform:scale(1.04);opacity:.5;animation:none;position:fixed}   /* fixed: 少し拡大した背景で画面がスクロールできてしまわないように */
 :root[data-theme="dark"] .xp.lyron::before{opacity:.55}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .xp.lyron::before{opacity:.55}}
 /* ジャケットが見える分、歌詞・曲名・ボタンに背景色のふちを付けて読みやすくする */

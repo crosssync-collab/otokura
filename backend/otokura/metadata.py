@@ -9,7 +9,7 @@ from pathlib import Path
 from .lyrics.encoding import fix_mojibake
 
 AUDIO_EXT = {".flac", ".mp3", ".m4a", ".mp4", ".aac", ".ogg", ".oga", ".opus", ".wav", ".aif", ".aiff",
-             ".ape", ".tta", ".wv", ".dsf", ".dff", ".mpc", ".wma"}
+             ".ape", ".tta", ".wv", ".dsf", ".dff", ".mpc", ".wma", ".tak"}
 # ブラウザがそのまま再生できる形式(これ以外は transcode.py で変換して配る)
 BROWSER_PLAYABLE = {"FLAC", "MP3", "AAC", "Vorbis", "Opus", "WAV"}
 MIME = {"FLAC": "audio/flac", "MP3": "audio/mpeg", "AAC": "audio/mp4", "ALAC": "audio/mp4", "Vorbis": "audio/ogg",
@@ -45,6 +45,7 @@ class TrackInfo:
     fixed: bool = False       # 文字化けを直した
     guessed: bool = False     # ファイル名・フォルダ名から補った
     picture: bytes | None = field(default=None, repr=False)
+    cuesheet: str | None = field(default=None, repr=False)   # タグに埋め込まれた CUE シート(TAK・APE・FLAC の取り込みに多い)
 
 
 def _first(v) -> str | None:
@@ -81,7 +82,7 @@ def _codec(f) -> str:
         return "ALAC" if c.startswith("alac") else "AAC"
     return {"FLAC": "FLAC", "MP3": "MP3", "EasyMP3": "MP3", "OggVorbis": "Vorbis", "OggOpus": "Opus", "OggFLAC": "FLAC",
             "WAVE": "WAV", "AIFF": "AIFF", "MonkeysAudio": "APE", "TrueAudio": "TTA", "EasyTrueAudio": "TTA",
-            "WavPack": "WavPack", "DSF": "DSD", "DSDIFF": "DSD", "Musepack": "MPC", "ASF": "WMA"}.get(n, n)
+            "WavPack": "WavPack", "DSF": "DSD", "DSDIFF": "DSD", "Musepack": "MPC", "ASF": "WMA", "TAK": "TAK"}.get(n, n)
 
 
 def _tag_map(tags) -> dict[str, object]:
@@ -171,12 +172,45 @@ def guess_from_path(rel: Path) -> dict:
     return out
 
 
+class TAK:
+    """mutagen が読めない TAK: タグは APEv2、長さなどは ffprobe で読む。"""
+
+    def __init__(self, path: Path):
+        import json
+        import shutil
+        import subprocess
+        from types import SimpleNamespace
+        from mutagen.apev2 import APEv2, APENoHeaderError
+        try:
+            self.tags = APEv2(str(path))
+        except (APENoHeaderError, Exception):
+            self.tags = None
+        length, sr, bits, br = 0.0, None, None, None
+        probe = shutil.which("ffprobe")
+        if probe:
+            r = subprocess.run([probe, "-v", "error", "-select_streams", "a:0", "-show_entries",
+                                "format=duration,bit_rate:stream=sample_rate,bits_per_raw_sample", "-of", "json", str(path)],
+                               capture_output=True, timeout=60)
+            try:
+                j = json.loads(r.stdout or b"{}")
+                s = (j.get("streams") or [{}])[0]
+                length = float(j.get("format", {}).get("duration") or 0)
+                sr = int(s["sample_rate"]) if s.get("sample_rate") else None
+                bits = int(s["bits_per_raw_sample"]) if s.get("bits_per_raw_sample") else None
+                br = int(j["format"]["bit_rate"]) if j.get("format", {}).get("bit_rate") else None
+            except (ValueError, KeyError, TypeError):
+                pass
+        self.info = SimpleNamespace(length=length, sample_rate=sr, bits_per_sample=bits, bitrate=br)
+
+
 def read(path: Path, rel: Path) -> TrackInfo | None:
     import mutagen
     try:
         f = mutagen.File(str(path))
     except Exception:
         f = None
+    if f is None and path.suffix.lower() == ".tak":
+        f = TAK(path)
     if f is None:
         return None
     tags = f.tags
@@ -217,4 +251,5 @@ def read(path: Path, rel: Path) -> TrackInfo | None:
         fixed=fixed,
         guessed=guessed,
         picture=_picture(f, tags),
+        cuesheet=_first(tm.get("cuesheet")),
     )

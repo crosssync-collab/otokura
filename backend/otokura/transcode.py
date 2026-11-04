@@ -1,6 +1,6 @@
 """ブラウザがそのまま鳴らせない形式を ffmpeg で変換して配る。
 
-- 可逆(ALAC・AIFF・APE・TTA・WavPack・DSD)は FLAC に、非可逆(WMA・MPC)は AAC 256kbps(m4a)にする
+- 可逆(ALAC・AIFF・APE・TTA・WavPack・TAK・DSD)は FLAC に、非可逆(WMA・MPC)は AAC 256kbps(m4a)にする
 - DSD は PCM 24bit・88.2kHz にする(ブラウザも Chromecast も DSD は鳴らせない)
 - CUE シートの曲は、元のファイルからその区間だけを切り出す(可逆は FLAC、非可逆は AAC)
 - Chromecast に送るときは 48kHz を超える曲(ハイレゾ・DSD)を 24bit・48kHz の FLAC にする(機器によって鳴らないため)
@@ -17,7 +17,7 @@ import threading
 from pathlib import Path
 
 LOSSY = {"WMA", "MPC", "MP3", "AAC", "Vorbis", "Opus"}   # 変換先を AAC にする(MP3 などは CUE の切り出しのときだけ)
-CODECS = {"ALAC", "AIFF", "APE", "TTA", "WavPack", "DSD", "WMA", "MPC"}   # 変換して鳴らす形式
+CODECS = {"ALAC", "AIFF", "APE", "TTA", "WavPack", "TAK", "DSD", "WMA", "MPC"}   # 変換して鳴らす形式
 TIMEOUT_S = 600
 
 

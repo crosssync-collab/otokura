@@ -152,6 +152,15 @@ class Scanner:
                 rel = p.relative_to(src.path)
                 rels = rel.as_posix()
                 hit = cues.find(p)
+                if not hit and (src.id, rels) not in existing and not full:     # 前回、埋め込みの CUE で分けたファイル
+                    first = existing.get((src.id, rels + "#01"))
+                    if first and abs(first["mtime"] - stt.st_mtime) < 1e-3 and first["size"] == stt.st_size:
+                        for (sid, r2), row in existing.items():
+                            if sid == src.id and r2.startswith(rels + "#"):
+                                seen[src.id].add(r2)
+                                self._lyrics(row["id"], src, r2)
+                        st.done += 1
+                        continue
                 if hit:     # CUE シートで 1 つのファイルが何曲にも分かれている
                     try:
                         n += self._scan_cue(src, p, rel, rels, stt, hit, existing, seen[src.id], touched, full)
@@ -175,6 +184,15 @@ class Scanner:
                     info = None
                     st.errors.append(f"{src.name}/{rels}: {e}")
                 if info is None:
+                    st.done += 1
+                    continue
+                emb = cue.embedded(info.cuesheet, p)
+                if emb:     # タグに埋め込まれた CUE シートで分ける(TAK・APE の 1 ファイルのアルバムに多い)
+                    seen[src.id].discard(rels)
+                    try:
+                        n += self._scan_cue(src, p, rel, rels, stt, emb, existing, seen[src.id], touched, True, info)
+                    except Exception as e:
+                        st.errors.append(f"{src.name}/{rels}: {e}")
                     st.done += 1
                     continue
                 with self.db.write_lock:
@@ -219,11 +237,11 @@ class Scanner:
                     log.exception("on_done")
             log.info("スキャン完了: 追加 %d / 更新 %d / 削除 %d / エラー %d", st.added, st.updated, st.removed, len(st.errors))
 
-    def _scan_cue(self, src, p, rel, rels, stt, hit, existing, seen, touched, full) -> int:
+    def _scan_cue(self, src, p, rel, rels, stt, hit, existing, seen, touched, full, info=None) -> int:
         """CUE シートの曲を「元のファイル#曲番号」として登録する。CUE を書き換えたときも読み直す。"""
         sheet, tracks = hit
         try:
-            mtime = max(stt.st_mtime, sheet.path.stat().st_mtime)
+            mtime = max(stt.st_mtime, sheet.path.stat().st_mtime) if sheet.path != p else stt.st_mtime
         except OSError:
             mtime = stt.st_mtime
         size = stt.st_size
@@ -234,7 +252,7 @@ class Scanner:
             for o, v in zip(olds, vrels):
                 self._lyrics(o["id"], src, v)
             return 0
-        info = metadata.read(p, rel)
+        info = info or metadata.read(p, rel)
         if info is None:
             return 0
         year = metadata._int(sheet.date) if sheet.date else None

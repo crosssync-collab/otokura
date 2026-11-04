@@ -97,3 +97,31 @@ def test_scan_stream_and_edit(tmp_path):
     app.state.scanner.run()
     tracks2, _ = lib()
     assert tracks2[0]["title"] == "夜明け" and tracks2[0]["id"] == tracks[0]["id"]      # 同じ曲として(再生記録が残る)
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg が必要")
+def test_embedded_cuesheet_in_tags(tmp_path):
+    # TAK・APE・FLAC の 1 ファイルのアルバムは、CUE シートがタグに入っていることが多い(FILE 名は取り込む前の .wav)
+    from mutagen.flac import FLAC
+    from otokura.app import create_app
+    from otokura.config import Config, Source
+    d = tmp_path / "m" / "伊藤由奈 - WISH"
+    d.mkdir(parents=True)
+    p = d / "伊藤由奈 - WISH.flac"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+                    "-t", "9", str(p)], check=True)
+    f = FLAC(p)
+    f["CUESHEET"] = SHEET.replace("image.wav", "伊藤由奈 - WISH.wav")
+    f.save()
+    cfg = Config(sources=[Source("m", "M", tmp_path / "m")], data_dir=tmp_path / "data", scan_at=None,
+                 scan_on_start=False, lrclib=False)
+    app = create_app(cfg, start_background=False)
+    app.state.scanner.run()
+    c = TestClient(app)
+    j = c.get("/api/library").json()
+    tracks = [dict(zip(j["trackColumns"], r)) for r in j["tracks"]]
+    assert [(t["title"], t["cue"]) for t in tracks] == [("朝", 1), ("昼", 1), ("夜", 1)]
+    ids = [t["id"] for t in tracks]
+    st = app.state.scanner.run()                       # 変わっていなければ読み直さない(同じ曲のまま)
+    j = c.get("/api/library").json()
+    assert [r[0] for r in j["tracks"]] == ids and st.added == 0 and st.removed == 0
