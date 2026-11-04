@@ -318,7 +318,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xbot button.on{color:var(--pri)}
 /* 再生中画面: 縦はそのまま並べる。横並び(.wide)はスマホの横向きのとき、または向きのボタンで「横」を選んだとき(PC でも) */
 .xl,.xr{display:contents}
-.lfbtn,.lfplay{display:none!important}
+.lfbtn,.lfplay,.lfinfo{display:none!important}
 .xp.wide .in{max-width:1500px;height:100%;min-height:0;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:0 28px;
   padding:8px max(20px,env(safe-area-inset-right,0px)) 8px max(20px,env(safe-area-inset-left,0px))}
 .xp.wide .xtop{grid-column:2;grid-row:1;width:100%;max-width:680px;justify-self:center}
@@ -335,6 +335,10 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xp.wide .xbot{margin-top:0;padding-top:0}
 /* 歌詞だけを表示: 操作パネルを隠して歌詞を中央に大きく */
 .xp.wide.lyrfull .lfbtn,.xp.wide.lyrfull .lfplay{display:grid!important}
+.xp.wide.lyrfull .lfinfo{display:block!important;min-width:0;flex:0 1 auto;max-width:45%;line-height:1.3}
+.lfinfo b{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lfinfo small{display:block;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xp.wide.lyrfull .lyrbar>.chip{display:none}
 .xp.wide.lyrfull .in{grid-template-columns:minmax(0,1fr)}
 .xp.wide.lyrfull .xtop,.xp.wide.lyrfull .xr{display:none}
 .xp.wide.lyrfull .xl:has(.lyrwrap){width:auto}
@@ -1069,11 +1073,12 @@ function updatePreview(s,t){
 }
 function lyrBar(s){
   const c=lyrCache.get(s.id),d=c&&c.data,ly=d&&d.lyrics;
-  if(!ly||!ly.layers||!ly.layers.length||ly.instrumental)return `<div class="lyrbar"><span class="sp"></span><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
+  const info=`<span class="lfinfo"><b>${esc(s.t)}</b><small>${esc(s.ar||alOf(s).a)}</small></span>`;   // 全画面の歌詞のときだけ見える
+  if(!ly||!ly.layers||!ly.layers.length||ly.instrumental)return `<div class="lyrbar">${info}<span class="sp"></span><button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
   const est=(lyrMain(s,ly)||{}).estimated,step=est?1000:100;
   const sync=ly.hasWords?'語ごと':ly.synced?'行ごと':est?'時刻は推定':'同期なし';
   const off=d.offsetMs||0;
-  return `<div class="lyrbar"><span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。ずれたら − ＋ で合わせてください':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
+  return `<div class="lyrbar">${info}<span class="chip ${ly.synced?'pri':''}" title="${est?'曲の長さと行の長さから時刻を割り当てています。ずれたら − ＋ で合わせてください':'歌詞の出どころと同期の細かさ'}">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${sync}</span><span class="sp"></span>
     ${ly.synced||est?`<span class="offc" title="ずれの補正(＋で歌詞を早く出す)"><button data-act="lyrOff" data-d="-${step}" aria-label="歌詞を ${step/1000} 秒遅く出す">−</button><output id="lyroff">${(off>0?'+':'')+(off/1000).toFixed(1)}秒</output><button data-act="lyrOff" data-d="${step}" aria-label="歌詞を ${step/1000} 秒早く出す">＋</button></span>`:''}
     <button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
 }
@@ -1200,7 +1205,7 @@ function shelfState(sh,nav){
   sh.classList.toggle('more-l',over&&l);sh.classList.toggle('more-r',over&&r);
 }
 // 入りきらない曲名などを、時間で横に流して全体を見せる(再生中の画面とミニプレーヤー)
-const MQ_SEL='.mini .tt b,.mini .tt small,.xinfo h2,.xinfo .sub,.xtop .ctx b';
+const MQ_SEL='.mini .tt b,.mini .tt small,.xinfo h2,.xinfo .sub,.xtop .ctx b,.lyrfull .lfinfo b,.lyrfull .lfinfo small';
 function applyMarquee(root){
   if(!root)return;
   root.querySelectorAll(MQ_SEL).forEach(el=>{
