@@ -1244,7 +1244,7 @@ function lyrMenuSheet(){
     +(!s.local&&ly&&!ly.instrumental?mi('tedSheet','edit','タイミングを編集(タイミング調整の長押し・3 回押しでも開けます)'):'')
     +(d&&d.hasPrev&&!s.local?mi('tedRestore','back','記録・登録する前の歌詞に戻す'):'')
     +(ly&&ly.source==='manual'?mi('lyrClear','close','手動で登録した歌詞を削除'):'')
-    +`<input type="file" id="lyrfile" accept=".lrc,.ttml,.xml,.txt,text/plain" hidden>`);
+);
 }
 function lyrPasteSheet(){
   openSheet('lyrpaste','歌詞を貼り付ける',`<div style="padding:0 8px 8px">
@@ -1253,7 +1253,9 @@ function lyrPasteSheet(){
     <div class="acts" style="margin:10px 0 0"><button class="btn" data-act="lyrPasteSave">${ico('check',18)}保存</button><button class="btn ghost" data-act="sheetClose">やめる</button></div></div>`);
   setTimeout(()=>{const t=$('#lyrtext');if(t)t.focus();},50);
 }
-async function readTextFile(f){const buf=await f.arrayBuffer();try{return new TextDecoder('utf-8',{fatal:true}).decode(buf);}catch(e){return new TextDecoder('shift_jis').decode(buf);}}
+async function readTextFile(f){const buf=await f.arrayBuffer(),b=new Uint8Array(buf,0,Math.min(2,buf.byteLength));
+  if(b[0]===0xFF&&b[1]===0xFE)return new TextDecoder('utf-16le').decode(buf);if(b[0]===0xFE&&b[1]===0xFF)return new TextDecoder('utf-16be').decode(buf);   // メモ帳の Unicode 保存
+  try{return new TextDecoder('utf-8',{fatal:true}).decode(buf);}catch(e){return new TextDecoder('shift_jis').decode(buf);}}
 
 /* --- モック用の簡易パーサ(本番はサーバーの otokura/lyrics が解析する) --- */
 const tms=(m,s,f)=>(+m)*60000+(+s)*1000+(f?+String(f).padEnd(3,'0').slice(0,3):0);
@@ -1747,8 +1749,15 @@ const ACT={
   propsCover:()=>propsCoverPick(),
   propsCoverDel:()=>propsCoverDel(),
   propsRevert:d=>propsRevert(+d.id),
-  lyrFile:()=>{const i=$('#lyrfile');if(!i)return;i.onchange=async()=>{const f=i.files[0];if(!f)return;if(f.size>2e6){toast('ファイルが大きすぎます');return;}
-    const t=await readTextFile(f);closeSheet();lyrSave(cur().id,'PUT','',{text:t},`${f.name} を読み込みました`);};i.click();},
+  // 歌詞ファイルの読み込み。入力欄はシートの外に毎回作る(ファイルを選んでいる間にシートが作り直されても届くように)。
+  // Android は .lrc の種類を知らず選べないことがあるので、種類で絞らない。押した時の曲に保存する
+  lyrFile:()=>{const id=cur().id,i=document.createElement('input');i.type='file';i.hidden=true;document.body.appendChild(i);closeSheet();
+    i.addEventListener('change',async()=>{const f=i.files&&i.files[0];i.remove();if(!f)return;
+      if(f.size>2e6){toast('ファイルが大きすぎます');return;}
+      try{const t=await readTextFile(f);if(!t.trim()){toast(`${f.name} は空でした`);return;}
+        await lyrSave(id,'PUT','',{text:t},`${f.name} を読み込みました`);}
+      catch(e){toast(`${f.name} を読み込めませんでした: ${e.message||e}`);}});
+    i.click();},
   lyrClear:()=>{closeSheet();lyrSave(cur().id,'DELETE','/manual',undefined,'手動で登録した歌詞を削除しました');},
   tedSheet:()=>{closeSheet();tedSheet();},
   tedOff:()=>tedEnter('off'),
