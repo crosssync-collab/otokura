@@ -339,10 +339,12 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .lfinfo b{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lfinfo small{display:block;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .xp.wide.lyrfull .lyrbar>.chip{display:none}
-.xp.wide.lyrfull .lfseek{display:flex!important;align-items:center;gap:10px;padding:0 4px 2px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;filter:drop-shadow(0 0 3px var(--bg))}
+.xp.wide.lyrfull .in{padding-bottom:0}
+.xp.wide.lyrfull .lfseek{display:flex!important;align-items:flex-end;gap:10px;padding:0 4px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;filter:drop-shadow(0 0 3px var(--bg))}
 .lftrack{position:relative;flex:1;height:22px;cursor:pointer;touch-action:none}
-.lftrack::before{content:"";position:absolute;left:0;right:0;top:50%;height:4px;margin-top:-2px;border-radius:2px;background:color-mix(in srgb,var(--text) 22%,transparent)}
-.lftrack i{position:absolute;left:0;top:50%;height:4px;margin-top:-2px;border-radius:2px;background:var(--pri);width:0}
+.lft{line-height:1;padding-bottom:2px}
+.lftrack::before{content:"";position:absolute;left:0;right:0;bottom:4px;height:4px;border-radius:2px;background:color-mix(in srgb,var(--text) 22%,transparent)}
+.lftrack i{position:absolute;left:0;bottom:4px;height:4px;border-radius:2px;background:var(--pri);width:0}
 .lftrack b{display:none}   /* つまみは出さず、線だけにする */
 .xp.wide.lyrfull .in{grid-template-columns:minmax(0,1fr)}
 .xp.wide.lyrfull .xtop,.xp.wide.lyrfull .xr{display:none}
