@@ -343,7 +343,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .lftrack{position:relative;flex:1;height:22px;cursor:pointer;touch-action:none}
 .lftrack::before{content:"";position:absolute;left:0;right:0;top:50%;height:4px;margin-top:-2px;border-radius:2px;background:color-mix(in srgb,var(--text) 22%,transparent)}
 .lftrack i{position:absolute;left:0;top:50%;height:4px;margin-top:-2px;border-radius:2px;background:var(--pri);width:0}
-.lftrack b{position:absolute;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--pri);left:0;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.lftrack b{display:none}   /* つまみは出さず、線だけにする */
 .xp.wide.lyrfull .in{grid-template-columns:minmax(0,1fr)}
 .xp.wide.lyrfull .xtop,.xp.wide.lyrfull .xr{display:none}
 .xp.wide.lyrfull .xl:has(.lyrwrap){width:auto}
