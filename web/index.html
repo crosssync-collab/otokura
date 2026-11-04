@@ -355,13 +355,13 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xp.wide.lyrfull .lyr.fs-s{--fs:clamp(24px,8dvh,46px)} .xp.wide.lyrfull .lyr.fs-l{--fs:clamp(36px,12dvh,68px)}
 .xp.wide.lyrfull .ll{text-align:center;transform-origin:center}
 .xp.wide.lyrfull .gap{justify-content:center}
-/* 全画面の歌詞: ジャケットをぼかして薄く敷く(文字が読める濃さ) */
-.xp.wide.lyrfull .in::before{content:"";position:absolute;inset:0;background:var(--xbg);filter:blur(6px) saturate(1.15);transform:scale(1.04);opacity:.5;z-index:-1;pointer-events:none}
-:root[data-theme="dark"] .xp.wide.lyrfull .in::before{opacity:.55}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .xp.wide.lyrfull .in::before{opacity:.55}}
-/* ジャケットが見える分、歌詞と下のバーに背景色のふちを付けて読みやすくする */
-.xp.wide.lyrfull .lyr{filter:drop-shadow(0 0 3px var(--bg)) drop-shadow(0 0 10px var(--bg))}
-.xp.wide.lyrfull .lfinfo{filter:drop-shadow(0 0 4px var(--bg))}
+/* 歌詞を出しているとき(通常・全画面とも): 画面の背景にジャケットをぼかして敷く */
+.xp.lyron::before{background:var(--xbg);filter:blur(6px) saturate(1.15);transform:scale(1.04);opacity:.5;animation:none}
+:root[data-theme="dark"] .xp.lyron::before{opacity:.55}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .xp.lyron::before{opacity:.55}}
+/* ジャケットが見える分、歌詞・曲名・ボタンに背景色のふちを付けて読みやすくする */
+.xp.lyron .lyr{filter:drop-shadow(0 0 3px var(--bg)) drop-shadow(0 0 10px var(--bg))}
+.xp.lyron .lfinfo,.xp.lyron .xinfo,.xp.lyron .xtop .ctx,.xp.lyron .seek,.xp.lyron .xbot{filter:drop-shadow(0 0 4px var(--bg))}
 .xp.wide.lyrfull .in{overflow:hidden;isolation:isolate}
 /* 低い画面(スマホの横向き)では操作を小さめに */
 @media (max-height:600px){
@@ -1247,8 +1247,8 @@ function renderMini(){
 function renderXP(){
   if(!cur()){$('#xp').classList.remove('open');return;}
   const x=$('#xp'),s=cur(),al=alOf(s),S=st.set,o=OUTS.find(z=>z[0]===st.out),ci=chipsFor(al,s);
-  x.className='xp '+(st.xp?'open ':'')+'bg-'+S.np_bg+(isWide()?' wide':'')+(st.lyr&&st.lyrFull?' lyrfull':'');
-  x.style.setProperty('--xbg',artBg(al,1000));   // 全画面の歌詞の背景(ぼかして薄く)
+  x.className='xp '+(st.xp?'open ':'')+'bg-'+S.np_bg+(isWide()?' wide':'')+(st.lyr?' lyron':'')+(st.lyr&&st.lyrFull?' lyrfull':'');
+  x.style.setProperty('--xbg',artBg(al,1000));   // 歌詞を出しているときの背景(ぼかして薄く)
   const art=st.lyr?`<div class="lyrwrap" id="lyrslot"></div>${lyrBar(s)}`
     :`<div class="xart ${st.playing?'':'is-paused'}" data-act="artTap" style="background:${artBg(al,1000)}"><span class="paused">${ico('play',64)}</span></div>`
      +(S.np_lyrprev?`<div class="lprev" id="lprev" data-act="lyrToggle" role="button" tabindex="0" aria-label="歌詞を開く" hidden></div>`:'');
