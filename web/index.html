@@ -342,6 +342,11 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .xp.wide.lyrfull .lyr.fs-s{--fs:clamp(24px,8dvh,46px)} .xp.wide.lyrfull .lyr.fs-l{--fs:clamp(36px,12dvh,68px)}
 .xp.wide.lyrfull .ll{text-align:center;transform-origin:center}
 .xp.wide.lyrfull .gap{justify-content:center}
+/* 全画面の歌詞: ジャケットをぼかして薄く敷く(文字が読める濃さ) */
+.xp.wide.lyrfull .in::before{content:"";position:absolute;inset:0;background:var(--xbg);filter:blur(28px) saturate(1.3);transform:scale(1.15);opacity:.32;z-index:-1;pointer-events:none}
+:root[data-theme="dark"] .xp.wide.lyrfull .in::before{opacity:.38}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .xp.wide.lyrfull .in::before{opacity:.38}}
+.xp.wide.lyrfull .in{overflow:hidden;isolation:isolate}
 /* 低い画面(スマホの横向き)では操作を小さめに */
 @media (max-height:600px){
   .xp.wide .xinfo h2{font-size:19px}
@@ -1073,7 +1078,9 @@ function lyrBar(s){
     <button class="ib sm" data-act="lyrMenu" aria-label="歌詞のメニュー">${ico('more',20)}</button>${lyrFullBtns()}</div>`;
 }
 // 歌詞だけ(全画面)のときに歌詞バーに出す、再生・一時停止と「写真に戻る」(下の歌詞ボタンが隠れるため)
-const lyrFullBtns=()=>`<button class="ib sm lfplay" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',20)}</button>`
+const lyrFullBtns=()=>`<button class="ib sm lfplay" data-act="prev" aria-label="前の曲">${ico('prev',20)}</button>`
+  +`<button class="ib sm lfplay" data-act="toggle" aria-label="${st.playing?'一時停止':'再生'}">${ico(st.playing?'pause':'play',20)}</button>`
+  +`<button class="ib sm lfplay" data-act="next" aria-label="次の曲">${ico('next',20)}</button>`
   +`<button class="ib sm lfbtn" data-act="lyrFull" aria-label="写真に戻る" title="写真に戻る">${ico('album',20)}</button>`;
 function lyrFrame(){
   requestAnimationFrame(lyrFrame);
@@ -1219,6 +1226,7 @@ function renderXP(){
   if(!cur()){$('#xp').classList.remove('open');return;}
   const x=$('#xp'),s=cur(),al=alOf(s),S=st.set,o=OUTS.find(z=>z[0]===st.out),ci=chipsFor(al,s);
   x.className='xp '+(st.xp?'open ':'')+'bg-'+S.np_bg+(isWide()?' wide':'')+(st.lyr&&st.lyrFull?' lyrfull':'');
+  x.style.setProperty('--xbg',artBg(al,1000));   // 全画面の歌詞の背景(ぼかして薄く)
   const art=st.lyr?`<div class="lyrwrap" id="lyrslot"></div>${lyrBar(s)}`
     :`<div class="xart ${st.playing?'':'is-paused'}" data-act="artTap" style="background:${artBg(al,1000)}"><span class="paused">${ico('play',64)}</span></div>`
      +(S.np_lyrprev?`<div class="lprev" id="lprev" data-act="lyrToggle" role="button" tabindex="0" aria-label="歌詞を開く" hidden></div>`:'');
