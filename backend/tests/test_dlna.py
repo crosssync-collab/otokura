@@ -134,7 +134,7 @@ def test_control_through_api(tmp_path, fake, monkeypatch):
                  lrclib=False, webinfo=False, cast_url="http://192.168.0.252:8686")
     app = create_app(cfg, start_background=False)
     app.state.scanner.run()
-    app.state.dlna.hosts, app.state.dlna.port = ["127.0.0.1"], fake.ssdp_port
+    app.state.dlna.hosts, app.state.dlna.port, app.state.dlna.multicast = ["127.0.0.1"], fake.ssdp_port, False
     c = TestClient(app)
     j = c.get("/api/library").json()
     t = {r[j["trackColumns"].index("codec")]: r[0] for r in j["tracks"]}
@@ -210,11 +210,11 @@ def test_search_uses_multicast_and_sends_twice(monkeypatch):
 def test_manual_add_and_remove(tmp_path, fake):
     from otokura.db import Database
     d = dlna.Dlna(Database(tmp_path / "d.db"), port=fake.ssdp_port)
-    d.hosts = ["127.0.0.1"]
+    d.hosts, d.multicast = ["127.0.0.1"], False
     assert d.add(fake.location).manual
     assert list(d.devices.values())[0].name == "書斎のプレーヤー"
     d2 = dlna.Dlna(d.db, port=fake.ssdp_port)      # 再起動しても手で足した機器は残る
-    d2.hosts = ["127.0.0.1"]
+    d2.hosts, d2.multicast = ["127.0.0.1"], False
     d2.search()
     did = next(iter(d2.devices))
     assert d2.devices[did].manual

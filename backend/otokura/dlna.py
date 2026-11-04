@@ -271,6 +271,7 @@ class Dlna:
     def __init__(self, db, port: int = SSDP_PORT):
         self.db, self.port = db, port
         self.hosts: list[str] = []      # マルチキャストのほかに直接 M-SEARCH を送る先
+        self.multicast = True           # テストでは切る(本物の機器が返事をしないように)
         self.devices: dict[str, Renderer] = {}
         self._lock = threading.Lock()
         self.searched_at: float | None = None
@@ -296,7 +297,7 @@ class Dlna:
     def search(self) -> list[Renderer]:
         with self._lock:
             manual = self._manual()
-            locations = discover(self.hosts, port=self.port)
+            locations = discover(self.hosts, port=self.port, multicast=self.multicast)
             devs: dict[str, Renderer] = {}
             for loc in locations:
                 d = self._describe(loc, loc in manual)
@@ -323,7 +324,7 @@ class Dlna:
             except ValueError as e:
                 raise DlnaError("IP アドレスか、機器の説明ファイルの URL を入力してください") from e
             target = int(port) if port.isdigit() else self.port
-            locations = [x for x in discover(self.hosts, port=self.port) if urlparse(x).hostname == host] \
+            locations = [x for x in discover(self.hosts, port=self.port, multicast=self.multicast) if urlparse(x).hostname == host] \
                 or discover([host], port=target, multicast=False)
             if not locations:
                 raise DlnaError(f"{host} から返事がありません。電源と、機器の DLNA の設定を確認してください")
