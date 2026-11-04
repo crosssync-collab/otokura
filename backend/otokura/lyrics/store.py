@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS lyrics_user (
   manual_body       TEXT,
   lrclib_body       TEXT,
   lrclib_checked_at REAL,
-  lrclib_miss       INTEGER NOT NULL DEFAULT 0
+  lrclib_miss       INTEGER NOT NULL DEFAULT 0,
+  manual_prev       TEXT               -- 手動の歌詞を書き換える前の版 {"body": ..., "offsetMs": ...}(1 つだけ戻せる)
 );
 """
 
@@ -99,6 +100,10 @@ class LyricsStore:
         self.db = sqlite3.connect(str(db_path), check_same_thread=False, timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        try:   # 古い DB に列を足す
+            self.db.execute("ALTER TABLE lyrics_user ADD COLUMN manual_prev TEXT")
+        except sqlite3.OperationalError:
+            pass
         self.lrclib = lrclib
         self.folder = folder
 
@@ -152,6 +157,7 @@ class LyricsStore:
             "offsetMs": u["offset_ms"] if u else 0,
             "canFetch": self.lrclib is not None,
             "lrclibMiss": bool(u and u["lrclib_miss"]),
+            "hasPrev": bool(u and u["manual_prev"]),
         }
 
     # ---------- 利用者の操作 ----------
@@ -162,21 +168,46 @@ class LyricsStore:
         self.db.execute("UPDATE lyrics_user SET offset_ms=? WHERE track_id=?", (offset_ms, track_id))
         self.db.commit()
 
+    def _keep_prev(self, track_id: str) -> None:
+        u = self._user(track_id)
+        self.db.execute("UPDATE lyrics_user SET manual_prev=? WHERE track_id=?",
+                        (json.dumps({"body": u["manual_body"], "offsetMs": u["offset_ms"]}, ensure_ascii=False), track_id))
+
     @_locked
-    def set_manual(self, track_id: str, text: str | bytes, duration_ms: int | None = None) -> Lyrics:
+    def set_manual(self, track_id: str, text: str | bytes, duration_ms: int | None = None,
+                   offset_ms: int | None = None) -> Lyrics:
+        """手動の歌詞を登録する。書き換える前の版(歌詞とずれ)を 1 つ残す。offset_ms を渡すとずれも一緒に変える。"""
         if isinstance(text, bytes):
             text = decode_bytes(text)
         ly = parse_any(text, source="manual", track_ms=duration_ms)
         self._ensure_user(track_id)
+        self._keep_prev(track_id)
         self.db.execute("UPDATE lyrics_user SET manual_body=? WHERE track_id=?",
                         (json.dumps(ly.to_json(), ensure_ascii=False), track_id))
+        if offset_ms is not None:
+            self.db.execute("UPDATE lyrics_user SET offset_ms=? WHERE track_id=?",
+                            (max(-OFFSET_MAX_MS, min(OFFSET_MAX_MS, int(offset_ms))), track_id))
         self.db.commit()
         return ly
 
     @_locked
     def clear_manual(self, track_id: str) -> None:
+        self._ensure_user(track_id)
+        self._keep_prev(track_id)
         self.db.execute("UPDATE lyrics_user SET manual_body=NULL WHERE track_id=?", (track_id,))
         self.db.commit()
+
+    @_locked
+    def restore_prev(self, track_id: str) -> bool:
+        """手動の歌詞を、書き換える前の版に戻す。戻せる版が無ければ False。"""
+        u = self._user(track_id)
+        if not u or not u["manual_prev"]:
+            return False
+        p = json.loads(u["manual_prev"])
+        self.db.execute("UPDATE lyrics_user SET manual_body=?, offset_ms=?, manual_prev=NULL WHERE track_id=?",
+                        (p.get("body"), int(p.get("offsetMs") or 0), track_id))
+        self.db.commit()
+        return True
 
     def fetch_lrclib(self, t: TrackRef, force: bool = False) -> Lyrics | None:
         """手元に無い曲だけ LRCLIB から取る。force でない限り、見つからなかった曲は 30 日待つ。"""

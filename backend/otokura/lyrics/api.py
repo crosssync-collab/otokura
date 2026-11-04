@@ -51,10 +51,10 @@ def make_router(store: LyricsStore, get_track: Callable[[str], TrackRef | None])
         return store.get(tid)
 
     @r.put("/tracks/{tid}/lyrics")
-    def put_manual(tid: str, text: str = Body(..., embed=True)):
-        """貼り付けた歌詞(LRC / TTML / ただのテキストを自動判定)。"""
+    def put_manual(tid: str, text: str = Body(..., embed=True), offsetMs: int | None = Body(None, embed=True)):
+        """貼り付けた歌詞(LRC / TTML / ただのテキストを自動判定)。offsetMs を渡すとずれも一緒に変える(タイミングの記録)。"""
         t = track(tid)
-        store.set_manual(tid, text, t.duration_ms)
+        store.set_manual(tid, text, t.duration_ms, offsetMs)
         return store.get(tid)
 
     @r.post("/tracks/{tid}/lyrics/upload")
@@ -70,6 +70,14 @@ def make_router(store: LyricsStore, get_track: Callable[[str], TrackRef | None])
     def delete_manual(tid: str):
         track(tid)
         store.clear_manual(tid)
+        return store.get(tid)
+
+    @r.post("/tracks/{tid}/lyrics/restore")
+    def restore(tid: str):
+        """手動の歌詞を、書き換える前の版に戻す(タイミングの記録・貼り付け・削除の取り消し)。"""
+        track(tid)
+        if not store.restore_prev(tid):
+            raise HTTPException(409, "戻せる版がありません")
         return store.get(tid)
 
     return r

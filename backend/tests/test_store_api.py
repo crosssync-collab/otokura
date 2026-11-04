@@ -145,3 +145,20 @@ def test_lyrics_folder_only_when_nothing_local(env):
     assert [l["text"] for l in r["lyrics"]["layers"][0]["lines"]] == ["フォルダの歌詞"]
     (tmp / "a.lrc").write_text("[00:01.00]手元が勝つ", encoding="utf-8")
     assert c.get("/api/tracks/1/lyrics").json()["lyrics"]["source"] == "sidecar:lrc"
+
+
+def test_manual_keeps_previous_version(env):
+    c, *_ = env
+    assert c.post("/api/tracks/3/lyrics/restore").status_code == 409
+    c.put("/api/tracks/3/lyrics/offset", json={"offsetMs": 1500})
+    c.put("/api/tracks/3/lyrics", json={"text": "一行目\n二行目"})
+    r = c.put("/api/tracks/3/lyrics", json={"text": "[00:01.00]一行目\n[00:05.00]\n[00:09.00]二行目", "offsetMs": 0}).json()
+    assert r["hasPrev"] and r["offsetMs"] == 0 and r["lyrics"]["synced"]
+    ln = r["lyrics"]["layers"][0]["lines"]
+    assert [x["text"] for x in ln] == ["一行目", "二行目"] and ln[0]["end"] == 5000   # 空の行で前の行が終わる(間奏)
+    r = c.post("/api/tracks/3/lyrics/restore").json()
+    assert not r["hasPrev"] and r["offsetMs"] == 1500 and not r["lyrics"]["synced"]
+    # 削除も取り消せる
+    c.delete("/api/tracks/3/lyrics/manual")
+    assert not c.get("/api/tracks/3/lyrics").json()["available"]
+    assert c.post("/api/tracks/3/lyrics/restore").json()["lyrics"]["layers"][0]["lines"][0]["text"] == "一行目"
