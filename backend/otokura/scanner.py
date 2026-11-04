@@ -9,13 +9,14 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import art, cue, metadata
+from . import art, chapters, cue, metadata
 from .config import Config, Source
 from .db import Database
 
 log = logging.getLogger("otokura.scan")
 SKIP_DIRS = ("#recycle", "@eadir", "$recycle.bin", "lost+found", ".@__thumb")
 BATCH = 200
+SCAN_REV = "2"     # 読むタグを増やしたら上げる。上がったら次のスキャンは全ファイルを読み直す(2: ReplayGain・MP4 のチャプター)
 
 
 @dataclass
@@ -128,6 +129,7 @@ class Scanner:
         st = self.state = ScanState(running=True, phase="listing", started_at=time.time())
         self._pending = []
         try:
+            full = full or self.db.meta("scan_rev") != SCAN_REV
             work: list[tuple[Source, Path, os.stat_result]] = []
             alive: list[Source] = []
             for src in self.cfg.sources:
@@ -186,8 +188,8 @@ class Scanner:
                 if info is None:
                     st.done += 1
                     continue
-                emb = cue.embedded(info.cuesheet, p)
-                if emb:     # タグに埋め込まれた CUE シートで分ける(TAK・APE の 1 ファイルのアルバムに多い)
+                emb = cue.embedded(info.cuesheet, p) or chapters.read(p)
+                if emb:     # タグに埋め込まれた CUE シート(TAK・APE の 1 ファイルのアルバムに多い)か MP4 のチャプターで分ける
                     seen[src.id].discard(rels)
                     try:
                         n += self._scan_cue(src, p, rel, rels, stt, emb, existing, seen[src.id], touched, True, info)
@@ -224,6 +226,7 @@ class Scanner:
                 self._finish_albums(touched)
                 c.commit()
             self._flush(c)
+            self.db.meta("scan_rev", SCAN_REV)
         except Exception as e:
             log.exception("スキャンに失敗しました")
             st.errors.append(f"スキャンが途中で止まりました: {e}")
@@ -255,6 +258,8 @@ class Scanner:
         info = info or metadata.read(p, rel)
         if info is None:
             return 0
+        if not info.picture and p.suffix.lower() in chapters.EXT and not art.find_folder_image(p.parent):
+            info = replace(info, picture=chapters.video_frame(p))   # カバーの無いライブ映像は映像の 1 コマを使う
         year = metadata._int(sheet.date) if sheet.date else None
         stamp = type("S", (), {"st_mtime": mtime, "st_size": size})()
         for t, v, old in zip(tracks, vrels, olds):
@@ -322,15 +327,15 @@ class Scanner:
         c = self.db.conn
         vals = (stt.st_mtime, stt.st_size, aid, info.title, info.artist, info.albumartist, info.album, info.year,
                 info.genre, info.track_no, info.disc_no, info.duration_ms, info.codec, info.sample_rate,
-                info.bit_depth, info.bitrate, int(info.fixed), int(info.guessed), *cue_range)
+                info.bit_depth, info.bitrate, int(info.fixed), int(info.guessed), info.rg_track, info.rg_album, *cue_range)
         if old:
             c.execute("UPDATE tracks SET mtime=?,size=?,album_id=?,title=?,artist=?,albumartist=?,album=?,year=?,genre=?,"
                       "track_no=?,disc_no=?,duration_ms=?,codec=?,sample_rate=?,bit_depth=?,bitrate=?,tag_fixed=?,"
-                      "tag_guessed=?,cue_start=?,cue_end=? WHERE id=?", (*vals, old["id"]))
+                      "tag_guessed=?,rg_track=?,rg_album=?,cue_start=?,cue_end=? WHERE id=?", (*vals, old["id"]))
             return old["id"]
         cur = c.execute("INSERT INTO tracks(mtime,size,album_id,title,artist,albumartist,album,year,genre,track_no,"
-                        "disc_no,duration_ms,codec,sample_rate,bit_depth,bitrate,tag_fixed,tag_guessed,cue_start,cue_end,"
-                        "source,rel,added_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "disc_no,duration_ms,codec,sample_rate,bit_depth,bitrate,tag_fixed,tag_guessed,rg_track,rg_album,cue_start,cue_end,"
+                        "source,rel,added_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (*vals, src.id, rels, time.time()))
         return cur.lastrowid
 

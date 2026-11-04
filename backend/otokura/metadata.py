@@ -46,6 +46,8 @@ class TrackInfo:
     guessed: bool = False     # ファイル名・フォルダ名から補った
     picture: bytes | None = field(default=None, repr=False)
     cuesheet: str | None = field(default=None, repr=False)   # タグに埋め込まれた CUE シート(TAK・APE・FLAC の取り込みに多い)
+    rg_track: float | None = None   # ReplayGain(dB)
+    rg_album: float | None = None
 
 
 def _first(v) -> str | None:
@@ -55,6 +57,8 @@ def _first(v) -> str | None:
         v = v[0] if v else None
         if v is None:
             return None
+    if isinstance(v, bytes):                              # MP4 の ----(自由形式)のタグ
+        v = v.decode("utf-8", "replace")
     if isinstance(v, tuple):                              # MP4 の trkn/disk = (番号, 総数)
         v = v[0]
     if hasattr(v, "text") and not isinstance(v, str):     # ID3 フレーム
@@ -73,6 +77,25 @@ def _int(s: str | None) -> int | None:
         return None
     m = re.match(r"\s*(\d{1,4})", s)
     return int(m.group(1)) if m else None
+
+
+_GAIN = re.compile(r"\s*([-+]?\d+(?:\.\d+)?)")
+
+
+def _replaygain(tm: dict[str, object]) -> tuple[float | None, float | None]:
+    """(曲, アルバム) の dB。Vorbis・APE・ID3(TXXX)・MP4 の replaygain_*_gain と、Opus の R128_*_GAIN を読む。"""
+    def gain(name: str) -> float | None:
+        v = tm.get(f"replaygain_{name}_gain")
+        if v is None:
+            v = tm.get(f"----:com.apple.itunes:replaygain_{name}_gain")
+        m = _GAIN.match(_first(v) or "")
+        if m:
+            return float(m.group(1))
+        m = _GAIN.match(_first(tm.get(f"r128_{name}_gain")) or "")
+        if m:                       # Opus: 1/256 dB 単位の -23 LUFS 基準 → -18 LUFS 基準に直す
+            return int(float(m.group(1))) / 256 + 5
+        return None
+    return gain("track"), gain("album")
 
 
 def _codec(f) -> str:
@@ -234,6 +257,7 @@ def read(path: Path, rel: Path) -> TrackInfo | None:
     info = f.info
     length = float(getattr(info, "length", 0) or 0)
     bitrate = getattr(info, "bitrate", None)
+    rg_track, rg_album = _replaygain(tm)
     return TrackInfo(
         title=vals["title"] or g.get("title") or rel.stem,
         artist=vals["artist"] or vals["albumartist"] or g.get("artist") or "不明なアーティスト",
@@ -252,4 +276,6 @@ def read(path: Path, rel: Path) -> TrackInfo | None:
         guessed=guessed,
         picture=_picture(f, tags),
         cuesheet=_first(tm.get("cuesheet")),
+        rg_track=rg_track,
+        rg_album=rg_album,
     )

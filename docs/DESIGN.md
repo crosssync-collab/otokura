@@ -1,4 +1,4 @@
-# 音蔵 設計メモ(v0.2:土台+スキャン+再生+変換配信)
+# 音蔵 設計メモ
 
 ## 全体
 
@@ -47,6 +47,8 @@ OTOKURA_SOURCES=Lossless=/music/Lossless,1.Lossy=/music/1.Lossy
 | `settings` | 画面の設定(JSON) |
 | `lyrics_local` / `lyrics_user` | 歌詞(歌詞モジュール)。lyrics_user.manual_prev に手動の歌詞の 1 つ前の版 |
 | `tag_edits` | タグ編集の履歴(元に戻す用。画像は data/tag-history) |
+| `loudness` | ffmpeg で測った音量(LUFS)と頭・お尻の無音 |
+| `artist_info` / `album_info` | Web から取った情報。fetched_at(調べた時刻)と updated_at(内容が変わった時刻) |
 
 ## API
 
@@ -58,6 +60,12 @@ OTOKURA_SOURCES=Lossless=/music/Lossless,1.Lossy=/music/1.Lossy
 | GET/PUT | `/api/tracks/{id}/meta`、`/api/albums/{id}/meta`、`.../cover` | タグ・カバーの表示と編集。`POST /api/tagedits/{id}/revert` で元に戻す |
 | GET | `/mix/{name}.jpg` | ミックス・ショートカットの写真 |
 | GET | `/api/art/{album_id}?size=300` | カバー画像 |
+| POST | `/api/tracks/{id}/loudness` | この曲の音量と無音(無ければ測る)。`/api/loudness`、`.../start`、`.../stop` でまとめて測る |
+| GET | `/api/artists/info?name=`、`/api/albums/{id}/info` | Web の情報。`fetch=1` で未取得なら取りに行く。`POST /api/artists/refresh`、`/api/albums/{id}/info/refresh` で取り直す |
+| GET | `/api/artistart/{image}?size=300` | アーティスト写真 |
+| GET/POST | `/api/webinfo`、`.../start`、`.../check?days=30`、`.../stop` | Web の情報の状況、未取得をまとめて取得、更新の確認、中止 |
+| GET/POST/DELETE | `/api/dlna/devices` | DLNA の機器の一覧(`search=1` で探し直す)・手で追加・削除 |
+| POST/GET | `/api/dlna/{id}/load`、`play`、`pause`、`stop`、`seek`、`volume`、`status` | DLNA の機器の操作 |
 | POST | `/api/tracks/{id}/played` / `skipped` | 再生記録 |
 | PUT | `/api/tracks/{id}/stats` | お気に入り・評価 |
 | GET/POST/PUT/DELETE | `/api/playlists...` | プレイリスト |
@@ -82,9 +90,30 @@ OTOKURA_SOURCES=Lossless=/music/Lossless,1.Lossy=/music/1.Lossy
 - キャッシュのキーは 元のパス + 更新時刻 + 大きさ + Cast 向けか + 区間。同じものを同時に 2 つ変換しない。上限(`OTOKURA_TRANSCODE_MAX_GB`)を超えたら使った日時の古いものから消す
 - 変換しながら流す方式はとらない(途中から再生できず、長さも分からないため)。初回だけ変換を待つ(ALAC 1 曲 0.5 秒、TAK の途中の曲 5 秒、WMA→AAC 11 秒)。画面は次の曲を `/prepare` で先に変換させる
 
-## 次の段階
+## MP4 のチャプター(otokura.chapters)
 
-- DLNA へのキャスト
-- アーティスト画像やアルバム情報の Web 取得
-- ReplayGain、ギャップレス、スマートフェード(設定項目は残してある)
-- MP4 のチャプターで曲に分ける
+`.mp4` / `.m4a` に音声と 2 つ以上のチャプターがあれば、ffprobe で読んで CUE シートと同じ形にし、`元のファイル#曲番号` の曲として登録する。配信も CUE の切り出しと同じ。アルバムのタグが無ければファイルのタイトル(無ければファイル名)を 1 枚のアルバムにする。カバーが無ければ映像の 1 コマを使う。`SCAN_REV` を上げると次のスキャンで全ファイルを読み直す(既存の曲にもタグの追加やチャプターを反映するため)。
+
+## 音量とつなぎ(otokura.loudness + 画面)
+
+- ReplayGain のタグ(Vorbis・APE・ID3 TXXX・MP4・Opus の R128)を `tracks.rg_track / rg_album` に持つ。タグが無い曲は ffmpeg の ebur128 で測り、-18 LUFS 基準の値にする。silencedetect で頭・お尻の無音も測り、`loudness` 表に残す(ファイルが変わったら測り直す)
+- 測るのは 聴く曲と次の曲(`POST /api/tracks/{id}/loudness`)か、設定の「まとめて測る」(1 曲ずつ nice 19)
+- 音量は `audio.volume` で下げる方向だけ。Web Audio は使わない(画面を消しても止まらないこと、自動再生の制限で無音にならないことを優先)。同じアルバムが続くときはアルバムの値
+- つなぎは audio 要素 2 つ。曲の終わりの 25 秒前から次の曲を先読みし、`gap`(アルバムの続きの曲)は終わる約 10 ミリ秒前に入れ替え、`fade`(別のアルバムへ)はお尻の無音の手前から頭の無音を飛ばして重ねる。先読みが間に合わなければ曲の終わりでふつうに切り替える
+- 要素の入れ替えなのでサンプル単位の正確さはない。iPhone は volume を変えられず、操作なしで別の要素を鳴らせないので、音量調整もつなぎも行わない
+
+## Web の情報(otokura.webinfo)
+
+- アーティスト: MusicBrainz で本人を特定(名前が一致し、手元のアルバムと重なる候補)→ Wikidata → Wikipedia の紹介文。写真は Deezer(名前が一致し、手元のアルバムと重なるときだけ)→ 無ければ Wikimedia Commons
+- アルバム: MusicBrainz(タイトルとアーティストが一致)で発売日・種類・レーベル、Wikipedia の紹介文。無ければ iTunes の発売日
+- 取るのは ページを開いたとき(設定で切れる)か、設定の「未取得をまとめて取得」。1 件ずつ、MusicBrainz は 1 秒 1 回まで
+- 更新の確認: 取ってから 30 日経ったものを、毎日のスキャンのあとに 300 件まで調べ直す(設定の「更新を確認」ですぐにも)。内容が変わると `updated_at` を更新し、設定の「最近変わった情報」に出す。通信の失敗では今ある情報を消さない
+- 結果は `artist_info` / `album_info` 表と `/data/art`。音楽ファイルには書き込まない
+
+## DLNA・UPnP(otokura.dlna)
+
+- 探す: SSDP の M-SEARCH を、マルチキャストと、`OTOKURA_CAST_URL` と同じ /24 の各アドレスへの直接送信の両方で送る。Docker のブリッジのままで動く(host ネットワークは要らない)。見つからない機器は IP アドレスを手で足せる(`meta.dlna_manual` に残す)
+- 操作: AVTransport(SetAVTransportURI・Play・Pause・Stop・Seek・GetPositionInfo・GetTransportInfo)と RenderingControl(音量)の SOAP を NAS から送る。機器は `OTOKURA_CAST_URL` の `/api/tracks/{id}/stream?cast=1&dlna=1` を取りに来る(HEAD・Range・DLNA の応答ヘッダーに対応。48kHz を超える曲は Cast と同じく変換)
+- 画面は 1.5 秒ごとに状態を読む。止まったとき、最後に見た位置が曲の終わりの 6 秒以内なら次の曲へ、それ以外は機器側で止めたものとして止まる
+- キューは画面が持つ(Cast と同じ)ので、次の曲へ進むのは画面を開いている間
+- 家の中のアドレス以外には接続しない。説明ファイルの controlURL が別のホストを指す機器も使わない

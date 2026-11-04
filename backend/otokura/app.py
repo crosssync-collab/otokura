@@ -15,10 +15,13 @@ from pathlib import Path
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
+from urllib.parse import urlparse
 
 from . import __version__, art, metadata
 from .config import Config, from_env
 from .db import Database
+from .dlna import Dlna, DlnaError, didl
+from .loudness import REFERENCE_LUFS, Loudness
 from .lyrics.api import make_router as lyrics_router
 from .lyrics.folder import LyricsFolder
 from .lyrics.lrclib import LrcLib
@@ -26,6 +29,7 @@ from .lyrics.store import LyricsStore, TrackRef
 from .tag_api import make_router as tag_router
 from .transcode import Transcoder, CODECS as TRANSCODE_CODECS, LOSSY as TRANSCODE_LOSSY, target as transcode_target
 from .scanner import Scanner, Scheduler
+from .webinfo import WebInfo
 
 log = logging.getLogger("otokura")
 
@@ -47,8 +51,14 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     def playable_codecs() -> set[str]:
         return metadata.BROWSER_PLAYABLE | (TRANSCODE_CODECS if tc.available else set())
 
+    webinfo = WebInfo(db, cfg.art_dir) if cfg.webinfo else None
+    dlna = Dlna(db, urlparse(cfg.cast_url).hostname if cfg.cast_url else None)
+    app.state.webinfo, app.state.dlna = webinfo, dlna
+
     def bump():
         db.meta("library_version", str(time.time()))
+        if webinfo and start_background:
+            webinfo.daily()
     scanner.on_done = bump
 
     # ---------- 共通 ----------
@@ -82,6 +92,8 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         r = track_row(tid)
         return r["source"], r["rel"]
 
+    loud = Loudness(db, track_path)
+    app.state.loudness = loud
     app.include_router(tag_router(db, cfg, scanner, src_by_id, track_row, track_path), prefix="/api")
 
     def ensure_stat(source: str, rel: str):
@@ -97,8 +109,10 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         tracks = db.q(
             "SELECT t.id,t.album_id,t.disc_no,t.track_no,t.title,t.artist,t.duration_ms,t.codec,t.sample_rate,"
             "t.bit_depth,t.bitrate,t.rel,t.source,COALESCE(s.plays,0) plays,s.last_played,COALESCE(s.skips,0) skips,"
-            "COALESCE(s.fav,0) fav,COALESCE(s.rating,0) rating,t.tag_fixed,t.tag_guessed,t.cue_start IS NOT NULL cue "
+            "COALESCE(s.fav,0) fav,COALESCE(s.rating,0) rating,t.tag_fixed,t.tag_guessed,t.cue_start IS NOT NULL cue,"
+            f"ROUND(COALESCE(t.rg_track,{REFERENCE_LUFS}-l.lufs),2) rg,t.rg_album,l.head_ms,l.tail_ms "
             "FROM tracks t LEFT JOIN track_stats s ON s.source=t.source AND s.rel=t.rel "
+            "LEFT JOIN loudness l ON l.source=t.source AND l.rel=t.rel AND l.mtime=t.mtime AND l.size=t.size "
             "ORDER BY t.album_id, COALESCE(t.disc_no,1), COALESCE(t.track_no,9999), t.rel")
         return {
             "version": ver,
@@ -110,45 +124,75 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "albums": [list(r) for r in albums],
             "trackColumns": ["id", "albumId", "disc", "no", "title", "artist", "durationMs", "codec", "sampleRate",
                              "bitDepth", "kbps", "rel", "source", "plays", "lastPlayed", "skips", "fav", "rating",
-                             "tagFixed", "tagGuessed", "cue"],
+                             "tagFixed", "tagGuessed", "cue", "rgTrack", "rgAlbum", "headMs", "tailMs"],
             "tracks": [list(r) for r in tracks],
+            "artistArt": {r["name"]: r["image"] for r in db.q("SELECT name, image FROM artist_info WHERE image IS NOT NULL")},
         }
 
-    @app.get("/api/tracks/{tid}/stream")
-    def stream(tid: int, direct: bool = False, cast: bool = False):
-        """曲を配る。ブラウザが鳴らせない形式は変換したものを配る(direct=1 は、その端末がそのまま鳴らせると言うとき。Safari の ALAC など)。
-        cast=1 は Chromecast 向け: 48kHz を超える曲(ハイレゾ・DSD)は 24bit・48kHz の FLAC にする。"""
-        r = track_row(tid)
+    def stream_source(r, direct: bool = False, cast: bool = False) -> tuple[Path, str]:
+        """配るファイルと MIME。変換が要るものは変換してから返す。"""
         p = track_path(r)
         if not p.is_file():
             raise HTTPException(404, "ファイルが見つかりません。再スキャンしてください")
         codec = r["codec"]
-        if r["cue_start"] is not None:      # CUE シートの曲: その区間だけを切り出して配る
+        if r["cue_start"] is not None:      # CUE シート・チャプターの曲: その区間だけを切り出して配る
             if not tc.available:
                 raise HTTPException(415, "CUE シートの曲の再生には ffmpeg が必要です")
             try:
                 out = tc.get(p, codec, cast=cast and (r["sample_rate"] or 0) > 48000 and codec not in TRANSCODE_LOSSY,
                              cut=(r["cue_start"], r["cue_end"]))
             except Exception as e:
-                raise HTTPException(500, f"CUE シートの曲を切り出せませんでした: {e}")
-            return FileResponse(out, media_type=transcode_target(codec)[2], headers={"Cache-Control": "private, max-age=3600"})
+                raise HTTPException(500, f"曲を切り出せませんでした: {e}")
+            return out, transcode_target(codec)[2]
         hires = cast and codec not in TRANSCODE_LOSSY and ((r["sample_rate"] or 0) > 48000 or codec == "DSD")
         if hires and tc.available:
             try:
-                out = tc.get(p, codec, cast=True)
+                return tc.get(p, codec, cast=True), "audio/flac"
             except Exception as e:
                 raise HTTPException(500, f"Cast 向けに変換できませんでした: {e}")
-            return FileResponse(out, media_type="audio/flac", headers={"Cache-Control": "private, max-age=3600"})
         if codec in metadata.BROWSER_PLAYABLE or (direct and codec in metadata.MIME):
-            return FileResponse(p, media_type=metadata.MIME.get(codec, "application/octet-stream"),
-                                headers={"Cache-Control": "private, max-age=3600"})
+            return p, metadata.MIME.get(codec, "application/octet-stream")
         if codec not in TRANSCODE_CODECS or not tc.available:
             raise HTTPException(415, f"{codec} は再生できません(変換に使う ffmpeg がありません)")
         try:
-            out = tc.get(p, codec)
+            return tc.get(p, codec), transcode_target(codec)[2]
         except Exception as e:
             raise HTTPException(500, f"{codec} を変換できませんでした: {e}")
-        return FileResponse(out, media_type=transcode_target(codec)[2], headers={"Cache-Control": "private, max-age=3600"})
+
+    @app.api_route("/api/tracks/{tid}/stream", methods=["GET", "HEAD"])     # DLNA の機器は先に HEAD で調べることがある
+    def stream(tid: int, direct: bool = False, cast: bool = False, dlna: bool = False):
+        """曲を配る。ブラウザが鳴らせない形式は変換したものを配る(direct=1 は、その端末がそのまま鳴らせると言うとき。Safari の ALAC など)。
+        cast=1 は Chromecast・DLNA 向け: 48kHz を超える曲(ハイレゾ・DSD)は 24bit・48kHz の FLAC にする。dlna=1 は DLNA の機器が見る応答ヘッダーを付ける。"""
+        path, mime = stream_source(track_row(tid), direct, cast)
+        headers = {"Cache-Control": "private, max-age=3600"}
+        if dlna:
+            headers.update({"transferMode.dlna.org": "Streaming",
+                            "contentFeatures.dlna.org": "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"})
+        return FileResponse(path, media_type=mime, headers=headers)
+
+    @app.post("/api/tracks/{tid}/loudness")
+    def track_loudness(tid: int):
+        """この曲の音量と頭・お尻の無音。測っていなければ測る(初回は数秒〜十数秒かかる)。"""
+        r = track_row(tid)
+        res = loud.measure_track(r)
+        gain = r["rg_track"] if r["rg_track"] is not None else (round(REFERENCE_LUFS - res["lufs"], 2) if res else None)
+        return {"rgTrack": gain, "rgAlbum": r["rg_album"], "headMs": res["head_ms"] if res else None,
+                "tailMs": res["tail_ms"] if res else None}
+
+    @app.get("/api/loudness")
+    def loudness_state():
+        return loud.public()
+
+    @app.post("/api/loudness/start")
+    def loudness_start():
+        if not tc.available:
+            raise HTTPException(409, "音量を測るには ffmpeg が必要です")
+        return {"started": loud.start(), **loud.public()}
+
+    @app.post("/api/loudness/stop")
+    def loudness_stop():
+        loud.stop()
+        return loud.public()
 
     @app.post("/api/tracks/{tid}/prepare")
     def prepare(tid: int):
@@ -175,6 +219,156 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         if not p.is_file():
             raise HTTPException(404, "カバー画像がありません")
         return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+    # ---------- Web から取るアーティスト画像・アルバム情報 ----------
+    def need_webinfo() -> WebInfo:
+        if webinfo is None:
+            raise HTTPException(409, "Web からの取得は無効になっています(OTOKURA_WEBINFO)")
+        return webinfo
+
+    def artist_out(name: str, row) -> dict:
+        if row is None:
+            return {"name": name, "status": "missing"}
+        return {"name": name, "status": row["status"], "image": row["image"], "imageSource": row["image_source"],
+                "summary": row["summary"], "summaryUrl": row["summary_url"], "mbid": row["mbid"],
+                "fetchedAt": row["fetched_at"], "updatedAt": row["updated_at"]}
+
+    def album_out(row) -> dict:
+        if row is None:
+            return {"status": "missing"}
+        return {"status": row["status"], "releaseDate": row["release_date"], "kind": row["kind"], "label": row["label"],
+                "summary": row["summary"], "summaryUrl": row["summary_url"], "source": row["source"], "mbid": row["mbid"],
+                "fetchedAt": row["fetched_at"], "updatedAt": row["updated_at"]}
+
+    @app.get("/api/artists/info")
+    def artist_info(name: str, fetch: bool = False):
+        """fetch=1: まだ調べていなければ順番待ちの先頭に入れる。"""
+        row = db.one("SELECT * FROM artist_info WHERE name=?", (name,))
+        if row is None and fetch and webinfo and db.one("SELECT 1 FROM albums WHERE artist=? LIMIT 1", (name,)):
+            webinfo.enqueue("artist", name, first=True)
+            return {"name": name, "status": "pending"}
+        return artist_out(name, row)
+
+    @app.post("/api/artists/refresh")
+    def artist_refresh(body: dict = Body(...)):
+        name = str(body.get("name") or "")
+        if not db.one("SELECT 1 FROM albums WHERE artist=? LIMIT 1", (name,)):
+            raise HTTPException(404, "アーティストが見つかりません")
+        need_webinfo().enqueue("artist", name, first=True)
+        return {"name": name, "status": "pending"}
+
+    @app.get("/api/artistart/{image}")
+    def artist_art(image: str, size: int = 300):
+        p = art.thumb_path(cfg.art_dir, image, size) if re.fullmatch(r"[0-9a-f]{20}", image) else None
+        if not p or not p.is_file():
+            raise HTTPException(404, "画像がありません")
+        return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/api/albums/{album_id}/info")
+    def album_info(album_id: int, fetch: bool = False):
+        al = db.one("SELECT key FROM albums WHERE id=?", (album_id,))
+        if al is None:
+            raise HTTPException(404, "アルバムが見つかりません")
+        row = db.one("SELECT * FROM album_info WHERE key=?", (al["key"],))
+        if row is None and fetch and webinfo:
+            webinfo.enqueue("album", al["key"], first=True)
+            return {"status": "pending"}
+        return album_out(row)
+
+    @app.post("/api/albums/{album_id}/info/refresh")
+    def album_refresh(album_id: int):
+        al = db.one("SELECT key FROM albums WHERE id=?", (album_id,))
+        if al is None:
+            raise HTTPException(404, "アルバムが見つかりません")
+        need_webinfo().enqueue("album", al["key"], first=True)
+        return {"status": "pending"}
+
+    @app.get("/api/webinfo")
+    def webinfo_state():
+        return {"enabled": bool(webinfo), **(webinfo.public() if webinfo else {})}
+
+    @app.post("/api/webinfo/start")
+    def webinfo_start():
+        """まだ調べていないものをすべて取りに行く。"""
+        return {"queuedNow": need_webinfo().enqueue_missing(), **webinfo.public()}
+
+    @app.post("/api/webinfo/check")
+    def webinfo_check(days: float = 30):
+        """調べてから days 日以上経ったものを調べ直す(更新の確認)。"""
+        return {"queuedNow": need_webinfo().enqueue_stale(max(0, days)), **webinfo.public()}
+
+    @app.post("/api/webinfo/stop")
+    def webinfo_stop():
+        need_webinfo().stop()
+        return webinfo.public()
+
+    # ---------- DLNA・UPnP ----------
+    def dlna_call(fn):
+        try:
+            return fn()
+        except DlnaError as e:
+            raise HTTPException(502, str(e))
+
+    @app.get("/api/dlna/devices")
+    def dlna_devices(search: bool = False):
+        """search=1 で探し直す(2〜3 秒かかる)。"""
+        if search or dlna.searched_at is None:
+            dlna.search()
+        return {"devices": [d.public() for d in dlna.devices.values()], "castUrl": cfg.cast_url}
+
+    @app.post("/api/dlna/devices")
+    def dlna_add(body: dict = Body(...)):
+        try:
+            return dlna.add(str(body.get("address") or "")).public()
+        except DlnaError as e:
+            raise HTTPException(422, str(e))
+
+    @app.delete("/api/dlna/devices/{did}")
+    def dlna_remove(did: str):
+        dlna.remove(did)
+        return {"ok": True}
+
+    @app.post("/api/dlna/{did}/load")
+    def dlna_load(did: str, body: dict = Body(...)):
+        if not cfg.cast_url:
+            raise HTTPException(409, "機器が曲を取りに来るアドレスがありません。.env の OTOKURA_CAST_URL に NAS の家の中のアドレスを書いてください")
+        r = track_row(int(body["trackId"]))
+        _, mime = stream_source(r, cast=True)        # 変換が要る曲は、機器に渡す前に変換しておく
+        url = f"{cfg.cast_url}/api/tracks/{r['id']}/stream?cast=1&dlna=1"
+        al = db.one("SELECT art FROM albums WHERE id=?", (r["album_id"],))
+        cover = f"{cfg.cast_url}/api/art/{r['album_id']}?size=300" if al and al["art"] else None
+        meta = didl(url, mime, r["title"], r["artist"], r["album"], cover, r["duration_ms"])
+        dlna_call(lambda: dlna.get(did).load(url, meta, float(body.get("pos") or 0), body.get("play", True) is not False))
+        return {"uri": url, "mime": mime}
+
+    @app.post("/api/dlna/{did}/play")
+    def dlna_play(did: str):
+        dlna_call(lambda: dlna.get(did).play())
+        return {"ok": True}
+
+    @app.post("/api/dlna/{did}/pause")
+    def dlna_pause(did: str):
+        dlna_call(lambda: dlna.get(did).pause())
+        return {"ok": True}
+
+    @app.post("/api/dlna/{did}/stop")
+    def dlna_stop(did: str):
+        dlna_call(lambda: dlna.get(did).stop())
+        return {"ok": True}
+
+    @app.post("/api/dlna/{did}/seek")
+    def dlna_seek(did: str, body: dict = Body(...)):
+        dlna_call(lambda: dlna.get(did).seek(float(body.get("pos") or 0)))
+        return {"ok": True}
+
+    @app.post("/api/dlna/{did}/volume")
+    def dlna_volume(did: str, body: dict = Body(...)):
+        dlna_call(lambda: dlna.get(did).set_volume(int(body.get("volume") or 0)))
+        return {"ok": True}
+
+    @app.get("/api/dlna/{did}/status")
+    def dlna_status(did: str):
+        return dlna_call(lambda: dlna.get(did).status())
 
     # ---------- 再生記録・お気に入り・評価 ----------
     @app.post("/api/tracks/{tid}/played")
@@ -316,6 +510,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "ffmpeg": tc.available,
             "lrclib": cfg.lrclib,
             "castUrl": cfg.cast_url,
+            "webinfo": bool(webinfo),
             "dataDir": str(cfg.data_dir),
         }
 

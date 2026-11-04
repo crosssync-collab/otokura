@@ -71,6 +71,44 @@ CREATE TABLE IF NOT EXISTS playlist_items (
   rel         TEXT NOT NULL,
   PRIMARY KEY(playlist_id, pos)
 );
+CREATE TABLE IF NOT EXISTS loudness (         -- ffmpeg で測った音量と無音(スキャンで消さない。ファイルが変わったら測り直す)
+  source  TEXT NOT NULL,
+  rel     TEXT NOT NULL,
+  mtime   REAL NOT NULL,
+  size    INTEGER NOT NULL,
+  lufs    REAL,
+  head_ms INTEGER,
+  tail_ms INTEGER,
+  PRIMARY KEY(source, rel)
+);
+CREATE TABLE IF NOT EXISTS artist_info (      -- Web から取ったアーティスト情報(webinfo.py)
+  name         TEXT PRIMARY KEY,
+  mbid         TEXT,
+  image        TEXT,                       -- /data/art 内のファイル名の元
+  image_source TEXT,
+  summary      TEXT,
+  summary_url  TEXT,
+  status       TEXT NOT NULL,              -- ok / none(調べたが見つからない)
+  digest       TEXT,
+  fetched_at   REAL NOT NULL,              -- 最後に調べた時刻
+  first_at     REAL NOT NULL,
+  updated_at   REAL NOT NULL               -- 内容が最後に変わった時刻
+);
+CREATE TABLE IF NOT EXISTS album_info (       -- Web から取ったアルバム情報(albums.key で結びつける)
+  key          TEXT PRIMARY KEY,
+  mbid         TEXT,
+  release_date TEXT,
+  kind         TEXT,
+  label        TEXT,
+  summary      TEXT,
+  summary_url  TEXT,
+  source       TEXT,
+  status       TEXT NOT NULL,
+  digest       TEXT,
+  fetched_at   REAL NOT NULL,
+  first_at     REAL NOT NULL,
+  updated_at   REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -90,7 +128,8 @@ class Database:
         self.write_lock = threading.RLock()
         c = self.conn
         c.executescript(SCHEMA)
-        for col in ("cue_start INTEGER", "cue_end INTEGER"):   # CUE シートの曲: 元のファイルの何ミリ秒から何ミリ秒まで
+        for col in ("cue_start INTEGER", "cue_end INTEGER",    # CUE シートの曲: 元のファイルの何ミリ秒から何ミリ秒まで
+                    "rg_track REAL", "rg_album REAL"):         # ReplayGain のタグ(dB。-18 LUFS 基準)
             try:
                 c.execute(f"ALTER TABLE tracks ADD COLUMN {col}")
             except sqlite3.OperationalError:
