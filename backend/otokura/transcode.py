@@ -19,6 +19,14 @@ from pathlib import Path
 LOSSY = {"WMA", "MPC", "MP3", "AAC", "Vorbis", "Opus"}   # 変換先を AAC にする(MP3 などは CUE の切り出しのときだけ)
 CODECS = {"ALAC", "AIFF", "APE", "TTA", "WavPack", "TAK", "DSD", "WMA", "MPC"}   # 変換して鳴らす形式
 TIMEOUT_S = 600
+# ダウンロードで選べる形式: (拡張子, 配るときの MIME, ffmpeg の引数, カバーを埋め込めるか)
+EXPORTS = {
+    "flac": (".flac", "audio/flac", ["-c:a", "flac", "-compression_level", "5", "-f", "flac"], True),
+    "mp3": (".mp3", "audio/mpeg", ["-c:a", "libmp3lame", "-b:a", "320k", "-id3v2_version", "3", "-f", "mp3"], True),
+    "aac": (".m4a", "audio/mp4", ["-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", "-f", "ipod"], True),
+    "opus": (".opus", "audio/ogg", ["-c:a", "libopus", "-b:a", "192k", "-f", "ogg"], False),
+    "wav": (".wav", "audio/wav", ["-c:a", "pcm_s24le", "-f", "wav"], False),
+}
 
 
 def target(codec: str) -> tuple[str, str, str]:
@@ -49,7 +57,18 @@ class Transcoder:
     def get(self, src: Path, codec: str, cast: bool = False, cut=None) -> Path:
         """変換したファイルのパス(無ければ変換してから返す)。cast=True は Chromecast 向け(48kHz まで)。
         cut=(開始ms, 終了ms か None) は CUE シートの曲の区間。"""
-        dst = self.cache_path(src, codec, cast, cut)
+        return self._make(self.cache_path(src, codec, cast, cut), lambda dst: self._run(src, dst, codec, cast, cut))
+
+    def export(self, src: Path, fmt: str, cut=None, tags: dict | None = None, cover: Path | None = None, dsd: bool = False) -> Path:
+        """ダウンロード用に形式を変える。タグとカバーも入れる。変換の置き場と上限は再生用と同じ。"""
+        st = src.stat()
+        art = cover if cover and EXPORTS[fmt][3] and cover.is_file() else None
+        sign = f"{src}\0{st.st_mtime_ns}\0{st.st_size}\0export\0{fmt}\0{cut or ''}\0{sorted((tags or {}).items())}\0{art or ''}"
+        dst = self.dir / ("x" + hashlib.sha1(sign.encode("utf-8")).hexdigest()[:24] + EXPORTS[fmt][0])
+        return self._make(dst, lambda d: self._run_export(src, d, fmt, cut, tags or {}, art, dsd))
+
+    def _make(self, dst: Path, run) -> Path:
+        """無ければ作る。同じものを同時に 2 つ作らない。"""
         while True:
             if dst.is_file():
                 try:
@@ -68,7 +87,7 @@ class Transcoder:
                     raise RuntimeError("変換できませんでした")
                 continue
             try:
-                self._run(src, dst, codec, cast, cut)
+                run(dst)
             finally:
                 with self.lock:
                     self.busy.pop(dst.name, None)
@@ -107,6 +126,34 @@ class Transcoder:
             elif codec == "DSD":
                 cmd += ["-ar", "88200", "-sample_fmt", "s32", "-bits_per_raw_sample", "24"]
             cmd += ["-c:a", "flac", "-compression_level", "5", "-f", "flac"]
+        r = subprocess.run(cmd + [str(tmp)], capture_output=True, timeout=TIMEOUT_S)
+        if r.returncode != 0 or not tmp.is_file() or tmp.stat().st_size == 0:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError("変換できませんでした: " + r.stderr.decode("utf-8", "replace")[-300:])
+        tmp.replace(dst)
+
+    def _run_export(self, src: Path, dst: Path, fmt: str, cut, tags: dict, art: Path | None, dsd: bool) -> None:
+        if not self.ffmpeg:
+            raise RuntimeError("ffmpeg がありません")
+        self.dir.mkdir(parents=True, exist_ok=True)
+        tmp = dst.with_name(dst.name + ".part")
+        cmd = [self.ffmpeg, "-nostdin", "-v", "error", "-y"]
+        if cut and cut[0]:
+            cmd += ["-ss", f"{cut[0] / 1000:.3f}"]
+        cmd += ["-i", str(src)]
+        if art:
+            cmd += ["-i", str(art)]
+        if cut and cut[1] is not None:
+            cmd += ["-t", f"{(cut[1] - cut[0]) / 1000:.3f}"]
+        cmd += ["-map", "0:a:0", "-map_metadata", "-1"]
+        if art:
+            cmd += ["-map", "1:v:0", "-c:v", "copy", "-disposition:v", "attached_pic"]
+        if dsd:
+            cmd += ["-ar", "88200"]
+        for k, v in tags.items():
+            if v not in (None, ""):
+                cmd += ["-metadata", f"{k}={v}"]
+        cmd += EXPORTS[fmt][2]
         r = subprocess.run(cmd + [str(tmp)], capture_output=True, timeout=TIMEOUT_S)
         if r.returncode != 0 or not tmp.is_file() or tmp.stat().st_size == 0:
             tmp.unlink(missing_ok=True)

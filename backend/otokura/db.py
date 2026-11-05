@@ -47,7 +47,27 @@ CREATE TABLE IF NOT EXISTS tracks (
   UNIQUE(source, rel)
 );
 CREATE INDEX IF NOT EXISTS tracks_album ON tracks(album_id);
-CREATE TABLE IF NOT EXISTS track_stats (     -- スキャンで消さない(パスで結びつける)
+CREATE TABLE IF NOT EXISTS users (
+  id          INTEGER PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  pw_hash     TEXT NOT NULL,
+  role        TEXT NOT NULL,             -- admin / member
+  created_at  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash  TEXT PRIMARY KEY,
+  user_id     INTEGER NOT NULL,
+  created_at  REAL NOT NULL,
+  expires_at  REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_settings (   -- 人ごとの設定
+  user_id     INTEGER NOT NULL,
+  key         TEXT NOT NULL,
+  value       TEXT NOT NULL,
+  PRIMARY KEY(user_id, key)
+);
+CREATE TABLE IF NOT EXISTS track_stats (     -- 人ごとの記録。スキャンで消さない(パスで結びつける)
+  user_id     INTEGER NOT NULL DEFAULT 1,
   source      TEXT NOT NULL,
   rel         TEXT NOT NULL,
   plays       INTEGER NOT NULL DEFAULT 0,
@@ -55,10 +75,11 @@ CREATE TABLE IF NOT EXISTS track_stats (     -- スキャンで消さない(パ�
   skips       INTEGER NOT NULL DEFAULT 0,
   fav         INTEGER NOT NULL DEFAULT 0,
   rating      INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY(source, rel)
+  PRIMARY KEY(user_id, source, rel)
 );
 CREATE TABLE IF NOT EXISTS playlists (
   id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL DEFAULT 1,
   name        TEXT NOT NULL,
   rule        TEXT,                      -- スマートプレイリストの条件(JSON)。通常は NULL
   created_at  REAL NOT NULL,
@@ -127,6 +148,7 @@ class Database:
         self._local = threading.local()
         self.write_lock = threading.RLock()
         c = self.conn
+        self._to_accounts(c)
         c.executescript(SCHEMA)
         for col in ("cue_start INTEGER", "cue_end INTEGER",    # CUE シートの曲: 元のファイルの何ミリ秒から何ミリ秒まで
                     "rg_track REAL", "rg_album REAL"):         # ReplayGain のタグ(dB。-18 LUFS 基準)
@@ -135,6 +157,29 @@ class Database:
             except sqlite3.OperationalError:
                 pass
         c.commit()
+
+    def _to_accounts(self, c: sqlite3.Connection) -> None:
+        """アカウントの無かった頃の DB の記録を、最初の管理者(id=1)のものにする。移す前の DB を残す。"""
+        cols = [r[1] for r in c.execute("PRAGMA table_info(track_stats)")]
+        if not cols or "user_id" in cols:
+            return
+        backup = Path(self.path).with_name("otokura.pre-accounts.db")
+        if not backup.exists():
+            c.execute("VACUUM INTO ?", (str(backup),))
+        c.executescript("""
+          BEGIN;
+          ALTER TABLE track_stats RENAME TO track_stats_old;
+          CREATE TABLE track_stats (user_id INTEGER NOT NULL DEFAULT 1, source TEXT NOT NULL, rel TEXT NOT NULL,
+            plays INTEGER NOT NULL DEFAULT 0, last_played REAL, skips INTEGER NOT NULL DEFAULT 0, fav INTEGER NOT NULL DEFAULT 0,
+            rating INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(user_id, source, rel));
+          INSERT INTO track_stats(user_id,source,rel,plays,last_played,skips,fav,rating)
+            SELECT 1,source,rel,plays,last_played,skips,fav,rating FROM track_stats_old;
+          DROP TABLE track_stats_old;
+          ALTER TABLE playlists ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1;
+          CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(user_id, key));
+          INSERT OR IGNORE INTO user_settings(user_id,key,value) SELECT 1,key,value FROM settings;
+          COMMIT;
+        """)
 
     @property
     def conn(self) -> sqlite3.Connection:

@@ -25,6 +25,7 @@ class Config:
     cast_url: str | None = None   # Google Cast の機器が曲を取りに来るアドレス(家の中の http://NAS:8686)
     transcode_max_gb: float = 20.0   # 変換したファイルを残しておく上限(data/transcode)
     webinfo: bool = True     # アーティスト画像・アルバム情報を Web から取る
+    auth: bool = False       # ログインを求める。テスト以外の起動(from_env)では必ず True
 
     @property
     def db_path(self) -> Path:
@@ -73,4 +74,5 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         cast_url=(e.get("OTOKURA_CAST_URL") or "").rstrip("/") or None,
         transcode_max_gb=float(e.get("OTOKURA_TRANSCODE_MAX_GB") or 20),
         webinfo=e.get("OTOKURA_WEBINFO", "1") not in ("0", "false", "no"),
+        auth=True,
     )

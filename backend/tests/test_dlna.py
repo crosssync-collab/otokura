@@ -145,8 +145,8 @@ def test_control_through_api(tmp_path, fake, monkeypatch):
     assert any("M-SEARCH" in s for s in fake.searches)
 
     r = c.post(f"/api/dlna/{did}/load", json={"trackId": t["FLAC"], "pos": 0}).json()
-    assert r["uri"] == f"http://192.168.0.252:8686/api/tracks/{t['FLAC']}/stream?cast=1&dlna=1" and r["mime"] == "audio/flac"
-    assert fake.actions[-3:] == ["Stop", "SetAVTransportURI", "Play"] and fake.uri.endswith("cast=1&amp;dlna=1")
+    assert r["uri"].startswith(f"http://192.168.0.252:8686/api/tracks/{t['FLAC']}/stream?cast=1&dlna=1&t=") and r["mime"] == "audio/flac"
+    assert fake.actions[-3:] == ["Stop", "SetAVTransportURI", "Play"] and "cast=1&amp;dlna=1&amp;t=" in fake.uri
     assert "song &amp;amp; one" in fake.meta      # DIDL の中の曲名は、SOAP に入れるときにもう一度エスケープされる
     assert c.get(f"/api/dlna/{did}/status").json() == {"state": "PLAYING", "pos": 0, "duration": 180, "uri": r["uri"], "volume": 30}
 

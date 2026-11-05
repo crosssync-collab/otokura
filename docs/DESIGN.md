@@ -14,6 +14,21 @@
 - 音楽ファイルに書き込むのは、利用者がプロパティでタグ・カバーを編集したときだけ(tagedit.py / tag_api.py)。書く前の値を tag_edits と data/tag-history に残し、元に戻せる。スキャン・再生・歌詞では書き込まない。
 - 状態はすべて `/data` に置く(DB、カバーの縮小画像、変換したファイル、タグ編集の履歴)。コンテナを作り直しても消えない。
 
+## アカウント(otokura.auth)
+
+- 管理者(admin)と家族(member)。アカウントは音蔵の DB だけに置き、NAS のユーザーは増やさない。音楽ファイルに触るのはコンテナだけ
+- `/api/` はすべてログインが要る(`Auth.guard` を全ルートの依存にしている)。例外は `/api/auth/*` と、下の署名付きの曲・カバー。起動(`from_env`)では必ず有効で、切る環境変数は無い
+- 家族の書き込みは `MEMBER_WRITES` の許可リストだけ。新しい API は既定で管理者だけになる。NAS のパスは管理者にだけ返す
+- パスワードは scrypt、8 文字以上。ログインは 1 年保持(Cookie は HttpOnly・SameSite=Lax、DB にはハッシュ)。5 回続けて間違えると名前と接続元の組で待ち時間(30 秒〜15 分)
+- 最初の管理者は `data/setup-code.txt` の確認コードで登録する(先に他の人が管理者になれないように)。登録するとファイルは消える
+- 人ごと: `track_stats`、`playlists`、`user_settings`(テーマ、自分の EQ プリセットなど)。アカウントの無かった頃の記録は最初の管理者(id=1)に移し、移す前の DB を `otokura.pre-accounts.db` に残す。端末ごと: エフェクト、キュー。全員で共通: 曲、歌詞、Web の情報、音量の測定結果
+- Cast・DLNA の機器はログインできないので、曲ごと・24 時間の HMAC 署名を URL に付ける(`t=期限.署名`)。曲の配信とカバーの GET にだけ効く
+- 家族の DLNA は家の中のアドレスからだけ(Tailscale や転送元が不明な接続は外とみなす)。外から押して家で鳴らないように
+
+## ダウンロード
+
+`GET /api/tracks/{id}/download?format=`。`original` は元のファイル(CUE・チャプターの曲は切り出し)。`flac / wav / mp3 / aac / opus` は変換し、タグとカバー(FLAC・MP3・AAC のみ)を入れる。変換したものは `/data/transcode` に残り、上限も再生用と共通。画面では、非可逆の曲に可逆の形式を、同じ形式への変換を出さない。
+
 ## ソース
 
 `OTOKURA_SOURCES` に `名前=コンテナ内のパス` をカンマ区切りで書く。
@@ -54,6 +69,9 @@ OTOKURA_SOURCES=Lossless=/music/Lossless,1.Lossy=/music/1.Lossy
 
 | メソッド | パス | 内容 |
 | --- | --- | --- |
+| GET/POST | `/api/auth/state`、`setup`、`login`、`logout`、`password` | ログイン |
+| GET/POST/PUT/DELETE | `/api/users...` | アカウントの管理(管理者) |
+| GET | `/api/tracks/{id}/download`、`cast-link` | ダウンロード、Cast の機器に渡す署名付きのアドレス |
 | GET | `/api/library` | 画面が最初に読む一覧(アルバム・曲・統計)。ETag 付き |
 | GET | `/api/tracks/{id}/stream` | 音声の配信(Range 対応)。鳴らせない形式・CUE の曲は変換して配る。`?direct=1` その端末がそのまま鳴らせる(Safari の ALAC 等)、`?cast=1` Google Cast 向け(48kHz まで) |
 | POST | `/api/tracks/{id}/prepare` | 次の曲を先に変換しておく |

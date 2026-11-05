@@ -97,7 +97,7 @@ def make_router(db, cfg, scanner, src_by_id, track_row, track_path) -> APIRouter
 
     # ---------- 1 曲 ----------
     @r.get("/tracks/{tid}/meta")
-    def get_meta(tid: int):
+    def get_meta(tid: int, request: Request):
         row = track_row(tid)
         p = track_path(row)
         try:
@@ -108,8 +108,8 @@ def make_router(db, cfg, scanner, src_by_id, track_row, track_path) -> APIRouter
             stt = p.stat()
         except OSError:
             raise HTTPException(404, "ファイルが見つかりません。再スキャンしてください")
-        s = db.one("SELECT plays,last_played,skips,fav,rating FROM track_stats WHERE source=? AND rel=?",
-                   (row["source"], row["rel"]))
+        s = db.one("SELECT plays,last_played,skips,fav,rating FROM track_stats WHERE user_id=? AND source=? AND rel=?",
+                   (request.state.user["id"], row["source"], row["rel"]))
         src = src_by_id.get(row["source"])
         return {
             **tags,

@@ -12,11 +12,12 @@ import platform
 import time
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from . import __version__, art, metadata
+from .auth import Auth, is_home
 from .config import Config, from_env
 from .db import Database
 from .dlna import Dlna, DlnaError, didl
@@ -26,7 +27,7 @@ from .lyrics.folder import LyricsFolder
 from .lyrics.lrclib import LrcLib
 from .lyrics.store import LyricsStore, TrackRef
 from .tag_api import make_router as tag_router
-from .transcode import Transcoder, CODECS as TRANSCODE_CODECS, LOSSY as TRANSCODE_LOSSY, target as transcode_target
+from .transcode import EXPORTS, Transcoder, CODECS as TRANSCODE_CODECS, LOSSY as TRANSCODE_LOSSY, target as transcode_target
 from .scanner import Scanner, Scheduler
 from .webinfo import WebInfo
 
@@ -43,7 +44,9 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     tc = Transcoder(cfg.data_dir / "transcode", int(cfg.transcode_max_gb * 1024 ** 3))
     src_by_id = {s.id: s for s in cfg.sources}
 
-    app = FastAPI(title="音蔵", version=__version__, docs_url="/api/docs", openapi_url="/api/openapi.json")
+    auth = Auth(db, cfg.data_dir, cfg.auth)
+    app = FastAPI(title="音蔵", version=__version__, docs_url=None, redoc_url=None, openapi_url=None, dependencies=[Depends(auth.guard)])
+    app.state.auth = auth
     app.add_middleware(GZipMiddleware, minimum_size=2048)
     app.state.cfg, app.state.db, app.state.scanner, app.state.lyrics, app.state.transcoder = cfg, db, scanner, lyrics, tc
     # 鳴らせる形式 = ブラウザがそのまま鳴らせるもの + ffmpeg で変換するもの
@@ -91,12 +94,81 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         r = track_row(tid)
         return r["source"], r["rel"]
 
+    def uid_of(request: Request) -> int:
+        return request.state.user["id"]
+
+    def is_admin(request: Request) -> bool:
+        return request.state.user["role"] == "admin"
+
+    def sources_out(request: Request, s) -> dict:      # NAS のパスは管理者にだけ見せる
+        return {"id": s.id, "name": s.name, **({"path": str(s.path)} if is_admin(request) else {})}
+
+    # ---------- ログイン・アカウント ----------
+    def auth_state(request: Request, user) -> dict:
+        return {"needsSetup": cfg.auth and not auth.has_users(), "user": user,
+                "names": [r["name"] for r in db.q("SELECT name FROM users ORDER BY id")] if not user else [],
+                "canDlna": bool(user and (user["role"] == "admin" or is_home(request)))}
+
+    @app.get("/api/auth/state")
+    def auth_get(request: Request):
+        return auth_state(request, auth.user_of(request))
+
+    @app.post("/api/auth/setup")
+    def auth_setup(request: Request, response: Response, body: dict = Body(...)):
+        uid = auth.setup(body.get("code", ""), body.get("name", ""), body.get("password", ""))
+        auth.start_session(request, response, uid)
+        return auth_state(request, auth.public(db.one("SELECT * FROM users WHERE id=?", (uid,))))
+
+    @app.post("/api/auth/login")
+    def auth_login(request: Request, response: Response, body: dict = Body(...)):
+        return auth_state(request, auth.login(request, response, body.get("name", ""), body.get("password", "")))
+
+    @app.post("/api/auth/logout")
+    def auth_logout(request: Request, response: Response):
+        auth.logout(request, response)
+        return {"ok": True}
+
+    @app.post("/api/auth/password")
+    def auth_password(request: Request, body: dict = Body(...)):
+        user = auth.user_of(request)
+        if not user:
+            raise HTTPException(401, "ログインしてください")
+        row = db.one("SELECT pw_hash FROM users WHERE id=?", (user["id"],))
+        from .auth import COOKIE, check_password
+        if not check_password(str(body.get("current") or ""), row["pw_hash"]):
+            raise HTTPException(403, "今のパスワードが違います")
+        auth.set_password(user["id"], body.get("new", ""), keep_session=request.cookies.get(COOKIE))
+        return {"ok": True}
+
+    @app.get("/api/users")
+    def users_list():
+        return [{"id": r["id"], "name": r["name"], "role": r["role"]} for r in db.q("SELECT * FROM users ORDER BY id")]
+
+    @app.post("/api/users")
+    def users_add(body: dict = Body(...)):
+        uid = auth.create_user(body.get("name", ""), body.get("password", ""))
+        return {"id": uid}
+
+    @app.put("/api/users/{uid}/password")
+    def users_password(uid: int, body: dict = Body(...)):
+        if not db.one("SELECT 1 FROM users WHERE id=?", (uid,)):
+            raise HTTPException(404, "アカウントが見つかりません")
+        auth.set_password(uid, body.get("password", ""))
+        return {"ok": True}
+
+    @app.delete("/api/users/{uid}")
+    def users_delete(uid: int, request: Request):
+        if uid == uid_of(request):
+            raise HTTPException(409, "自分のアカウントは消せません")
+        auth.delete_user(uid)
+        return {"ok": True}
+
     loud = Loudness(db, track_path)
     app.state.loudness = loud
     app.include_router(tag_router(db, cfg, scanner, src_by_id, track_row, track_path), prefix="/api")
 
-    def ensure_stat(source: str, rel: str):
-        db.conn.execute("INSERT OR IGNORE INTO track_stats(source,rel) VALUES(?,?)", (source, rel))
+    def ensure_stat(uid: int, source: str, rel: str):
+        db.conn.execute("INSERT OR IGNORE INTO track_stats(user_id,source,rel) VALUES(?,?,?)", (uid, source, rel))
 
     # ---------- ライブラリ ----------
     @app.get("/api/library")
@@ -110,13 +182,13 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "t.bit_depth,t.bitrate,t.rel,t.source,COALESCE(s.plays,0) plays,s.last_played,COALESCE(s.skips,0) skips,"
             "COALESCE(s.fav,0) fav,COALESCE(s.rating,0) rating,t.tag_fixed,t.tag_guessed,t.cue_start IS NOT NULL cue,"
             f"ROUND(COALESCE(t.rg_track,{REFERENCE_LUFS}-l.lufs),2) rg,t.rg_album,l.head_ms,l.tail_ms "
-            "FROM tracks t LEFT JOIN track_stats s ON s.source=t.source AND s.rel=t.rel "
+            "FROM tracks t LEFT JOIN track_stats s ON s.user_id=? AND s.source=t.source AND s.rel=t.rel "
             "LEFT JOIN loudness l ON l.source=t.source AND l.rel=t.rel AND l.mtime=t.mtime AND l.size=t.size "
-            "ORDER BY t.album_id, COALESCE(t.disc_no,1), COALESCE(t.track_no,9999), t.rel")
+            "ORDER BY t.album_id, COALESCE(t.disc_no,1), COALESCE(t.track_no,9999), t.rel", (uid_of(request),))
         return {
             "version": ver,
             "now": time.time(),
-            "sources": [{"id": s.id, "name": s.name, "path": str(s.path)} for s in cfg.sources],
+            "sources": [sources_out(request, s) for s in cfg.sources],
             "playable": sorted(playable_codecs()),
             "transcode": {c: transcode_target(c)[0] for c in sorted(TRANSCODE_CODECS)} if tc.available else {},
             "albumColumns": ["id", "title", "artist", "year", "genre", "source", "folder", "hasArt", "hue", "addedAt", "art"],
@@ -168,6 +240,54 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             headers.update({"transferMode.dlna.org": "Streaming",
                             "contentFeatures.dlna.org": "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"})
         return FileResponse(path, media_type=mime, headers=headers)
+
+    @app.get("/api/tracks/{tid}/download")
+    def download(tid: int, format: str = "original"):
+        """曲をファイルとして渡す。original は元のファイルそのまま(CUE・チャプターの曲は、その区間を切り出したもの)。
+        flac・mp3・aac・opus・wav は変換して、タグとカバーも入れて渡す。"""
+        r = track_row(tid)
+        p = track_path(r)
+        if not p.is_file():
+            raise HTTPException(404, "ファイルが見つかりません。再スキャンしてください")
+        if format != "original" and format not in EXPORTS:
+            raise HTTPException(422, "選べない形式です")
+        ext = p.suffix.lower()
+        cut = (r["cue_start"], r["cue_end"]) if r["cue_start"] is not None else None
+        if format in EXPORTS:
+            if not tc.available:
+                raise HTTPException(415, "形式を変えるには ffmpeg が必要です")
+            al = db.one("SELECT art FROM albums WHERE id=?", (r["album_id"],))
+            cover = art.thumb_path(cfg.art_dir, al["art"], 1000) if al and al["art"] else None
+            tags = {"title": r["title"], "artist": r["artist"], "album": r["album"], "album_artist": r["albumartist"], "date": r["year"],
+                    "genre": r["genre"], "track": r["track_no"], "disc": r["disc_no"]}
+            try:
+                p = tc.export(p, format, cut=cut, tags=tags, cover=cover, dsd=r["codec"] == "DSD")
+            except Exception as e:
+                raise HTTPException(500, f"{format} に変換できませんでした: {e}")
+            ext = EXPORTS[format][0]
+        elif cut:
+            if not tc.available:
+                raise HTTPException(415, "曲の切り出しには ffmpeg が必要です")
+            try:
+                p = tc.get(p, r["codec"], cut=cut)
+            except Exception as e:
+                raise HTTPException(500, f"曲を切り出せませんでした: {e}")
+            ext = transcode_target(r["codec"])[1]
+        stem = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", f"{r['artist']} - {r['title']}").strip(" .")[:150] or "track"
+        # Content-Encoding: 音声を圧縮し直さない(NAS の負担になり、進み具合も出なくなる)
+        return FileResponse(p, filename=stem + ext, media_type="application/octet-stream", headers={"Content-Encoding": "identity"})
+
+    @app.get("/api/tracks/{tid}/cast-link")
+    def cast_link(tid: int, request: Request):
+        """Cast の機器に渡すアドレス(機器はログインできないので、この曲だけ・期限付きの署名を付ける)。"""
+        r = track_row(tid)
+        base = cfg.cast_url or str(request.base_url).rstrip("/")
+        return {"url": f"{base}/api/tracks/{tid}/stream?cast=1&t={auth.link('track', tid)}",
+                "art": art_link(base, r["album_id"])}
+
+    def art_link(base: str, album_id: int, size: int = 1000) -> str | None:
+        a = db.one("SELECT art FROM albums WHERE id=?", (album_id,))
+        return f"{base}/api/art/{album_id}?size={size}&t={auth.link('art', album_id)}" if a and a["art"] else None
 
     @app.post("/api/tracks/{tid}/loudness")
     def track_loudness(tid: int):
@@ -333,9 +453,8 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             raise HTTPException(409, "機器が曲を取りに来るアドレスがありません。.env の OTOKURA_CAST_URL に NAS の家の中のアドレスを書いてください")
         r = track_row(int(body["trackId"]))
         _, mime = stream_source(r, cast=True)        # 変換が要る曲は、機器に渡す前に変換しておく
-        url = f"{cfg.cast_url}/api/tracks/{r['id']}/stream?cast=1&dlna=1"
-        al = db.one("SELECT art FROM albums WHERE id=?", (r["album_id"],))
-        cover = f"{cfg.cast_url}/api/art/{r['album_id']}?size=300" if al and al["art"] else None
+        url = f"{cfg.cast_url}/api/tracks/{r['id']}/stream?cast=1&dlna=1&t={auth.link('track', r['id'])}"
+        cover = art_link(cfg.cast_url, r["album_id"], 300)
         meta = didl(url, mime, r["title"], r["artist"], r["album"], cover, r["duration_ms"])
         dlna_call(lambda: dlna.get(did).load(url, meta, float(body.get("pos") or 0), body.get("play", True) is not False))
         return {"uri": url, "mime": mime}
@@ -371,41 +490,44 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
 
     # ---------- 再生記録・お気に入り・評価 ----------
     @app.post("/api/tracks/{tid}/played")
-    def played(tid: int):
+    def played(tid: int, request: Request):
         s, rel = stat_key(tid)
+        uid = uid_of(request)
         with db.write_lock:
-            ensure_stat(s, rel)
-            db.conn.execute("UPDATE track_stats SET plays=plays+1, last_played=? WHERE source=? AND rel=?",
-                            (time.time(), s, rel))
+            ensure_stat(uid, s, rel)
+            db.conn.execute("UPDATE track_stats SET plays=plays+1, last_played=? WHERE user_id=? AND source=? AND rel=?",
+                            (time.time(), uid, s, rel))
             db.conn.commit()
-        return stats(tid)
+        return stats(tid, request)
 
     @app.post("/api/tracks/{tid}/skipped")
-    def skipped(tid: int):
+    def skipped(tid: int, request: Request):
         s, rel = stat_key(tid)
+        uid = uid_of(request)
         with db.write_lock:
-            ensure_stat(s, rel)
-            db.conn.execute("UPDATE track_stats SET skips=skips+1 WHERE source=? AND rel=?", (s, rel))
+            ensure_stat(uid, s, rel)
+            db.conn.execute("UPDATE track_stats SET skips=skips+1 WHERE user_id=? AND source=? AND rel=?", (uid, s, rel))
             db.conn.commit()
-        return stats(tid)
+        return stats(tid, request)
 
     @app.put("/api/tracks/{tid}/stats")
-    def put_stats(tid: int, body: dict = Body(...)):
+    def put_stats(tid: int, request: Request, body: dict = Body(...)):
         s, rel = stat_key(tid)
+        uid = uid_of(request)
         with db.write_lock:
-            ensure_stat(s, rel)
+            ensure_stat(uid, s, rel)
             if "fav" in body:
-                db.conn.execute("UPDATE track_stats SET fav=? WHERE source=? AND rel=?", (int(bool(body["fav"])), s, rel))
+                db.conn.execute("UPDATE track_stats SET fav=? WHERE user_id=? AND source=? AND rel=?", (int(bool(body["fav"])), uid, s, rel))
             if "rating" in body:
                 v = max(0, min(5, int(body["rating"])))
-                db.conn.execute("UPDATE track_stats SET rating=? WHERE source=? AND rel=?", (v, s, rel))
+                db.conn.execute("UPDATE track_stats SET rating=? WHERE user_id=? AND source=? AND rel=?", (v, uid, s, rel))
             db.conn.commit()
-        return stats(tid)
+        return stats(tid, request)
 
     @app.get("/api/tracks/{tid}/stats")
-    def stats(tid: int):
+    def stats(tid: int, request: Request):
         s, rel = stat_key(tid)
-        r = db.one("SELECT * FROM track_stats WHERE source=? AND rel=?", (s, rel))
+        r = db.one("SELECT * FROM track_stats WHERE user_id=? AND source=? AND rel=?", (uid_of(request), s, rel))
         return {"id": tid, "plays": r["plays"] if r else 0, "lastPlayed": r["last_played"] if r else None,
                 "skips": r["skips"] if r else 0, "fav": bool(r and r["fav"]), "rating": r["rating"] if r else 0}
 
@@ -430,26 +552,26 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
                 pos += 1
 
     @app.get("/api/playlists")
-    def playlists():
-        return [pl_out(p) for p in db.q("SELECT * FROM playlists ORDER BY name COLLATE NOCASE")]
+    def playlists(request: Request):
+        return [pl_out(p) for p in db.q("SELECT * FROM playlists WHERE user_id=? ORDER BY name COLLATE NOCASE", (uid_of(request),))]
 
     @app.post("/api/playlists")
-    def create_playlist(body: dict = Body(...)):
+    def create_playlist(request: Request, body: dict = Body(...)):
         name = str(body.get("name") or "").strip()
         if not name:
             raise HTTPException(422, "プレイリストの名前を入力してください")
         rule = body.get("rule")
         with db.write_lock:
             now = time.time()
-            cur = db.conn.execute("INSERT INTO playlists(name,rule,created_at,updated_at) VALUES(?,?,?,?)",
-                                  (name, json.dumps(rule, ensure_ascii=False) if rule else None, now, now))
+            cur = db.conn.execute("INSERT INTO playlists(user_id,name,rule,created_at,updated_at) VALUES(?,?,?,?,?)",
+                                  (uid_of(request), name, json.dumps(rule, ensure_ascii=False) if rule else None, now, now))
             set_items(cur.lastrowid, body.get("trackIds") or [])
             db.conn.commit()
         return pl_out(db.one("SELECT * FROM playlists WHERE id=?", (cur.lastrowid,)))
 
     @app.put("/api/playlists/{pid}")
-    def update_playlist(pid: int, body: dict = Body(...)):
-        p = db.one("SELECT * FROM playlists WHERE id=?", (pid,))
+    def update_playlist(pid: int, request: Request, body: dict = Body(...)):
+        p = db.one("SELECT * FROM playlists WHERE id=? AND user_id=?", (pid, uid_of(request)))
         if p is None:
             raise HTTPException(404, "プレイリストが見つかりません")
         with db.write_lock:
@@ -468,7 +590,9 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         return pl_out(db.one("SELECT * FROM playlists WHERE id=?", (pid,)))
 
     @app.delete("/api/playlists/{pid}")
-    def delete_playlist(pid: int):
+    def delete_playlist(pid: int, request: Request):
+        if not db.one("SELECT 1 FROM playlists WHERE id=? AND user_id=?", (pid, uid_of(request))):
+            raise HTTPException(404, "プレイリストが見つかりません")
         with db.write_lock:
             db.conn.execute("DELETE FROM playlists WHERE id=?", (pid,))
             db.conn.commit()
@@ -476,29 +600,29 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
 
     # ---------- 設定 ----------
     @app.get("/api/settings")
-    def get_settings():
-        return {r["key"]: json.loads(r["value"]) for r in db.q("SELECT key, value FROM settings")}
+    def get_settings(request: Request):
+        return {r["key"]: json.loads(r["value"]) for r in db.q("SELECT key, value FROM user_settings WHERE user_id=?", (uid_of(request),))}
 
     @app.put("/api/settings")
-    def put_settings(body: dict = Body(...)):
+    def put_settings(request: Request, body: dict = Body(...)):
         with db.write_lock:
             for k, v in body.items():
-                db.conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                                (str(k), json.dumps(v, ensure_ascii=False)))
+                db.conn.execute("INSERT INTO user_settings(user_id,key,value) VALUES(?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value",
+                                (uid_of(request), str(k), json.dumps(v, ensure_ascii=False)))
             db.conn.commit()
-        return get_settings()
+        return get_settings(request)
 
     # ---------- サーバー・スキャン ----------
     @app.get("/api/server")
-    def server():
+    def server(request: Request):
+        admin = is_admin(request)
         counts = {r["source"]: r["n"] for r in db.q("SELECT source, COUNT(*) n FROM tracks GROUP BY source")}
         last = db.meta("last_scan")
         unplayable = db.q("SELECT codec, COUNT(*) n FROM tracks GROUP BY codec ORDER BY n DESC")
         return {
             "version": __version__,
             "python": platform.python_version(),
-            "sources": [{"id": s.id, "name": s.name, "path": str(s.path), "ok": s.path.is_dir(),
-                         "tracks": counts.get(s.id, 0)} for s in cfg.sources],
+            "sources": [{**sources_out(request, s), "ok": s.path.is_dir(), "tracks": counts.get(s.id, 0)} for s in cfg.sources],
             "lastScan": float(last) if last else None,
             "scanAt": cfg.scan_at,
             "scan": scanner.state.public(),
@@ -510,7 +634,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "lrclib": cfg.lrclib,
             "castUrl": cfg.cast_url,
             "webinfo": bool(webinfo),
-            "dataDir": str(cfg.data_dir),
+            **({"dataDir": str(cfg.data_dir)} if admin else {}),
         }
 
     @app.get("/api/scan")

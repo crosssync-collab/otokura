@@ -483,6 +483,20 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 
 .toast{position:fixed;left:50%;bottom:150px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 18px;border-radius:14px;font-size:14px;z-index:40;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center}
 .toast.show{opacity:1}
+.authv{position:fixed;inset:0;z-index:70;display:grid;place-items:center;overflow:auto;padding:20px;background:radial-gradient(circle at 50% 30%,#123a5c 0,#07192b 52%,#030a12 100%);color:#fff}
+.authv[hidden]{display:none}
+.auth-card{display:flex;flex-direction:column;gap:14px;width:min(360px,100%)}
+.auth-card h1{font-size:19px;margin:0;text-align:center}.auth-card p{margin:0;font-size:13px;color:#a8d4f2;line-height:1.6}
+.auth-logo{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:6px}.auth-logo b{font-size:24px;letter-spacing:.3em;margin-right:-.3em}
+.auth-names{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.auth-names .chip{background:rgba(255,255,255,.12);color:#fff;border:0;min-height:44px;padding:0 18px;font-size:15px;border-radius:22px;cursor:pointer}
+.auth-names .chip[aria-checked="true"]{background:#fff;color:#07304d;font-weight:600}
+.auth-card label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#cfe6f7}
+.auth-card input{min-height:46px;padding:0 14px;border-radius:12px;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.08);color:#fff;font:inherit;font-size:16px}
+.auth-card input:focus{outline:2px solid #3db4ff;outline-offset:1px}
+.auth-card .btn{min-height:46px;justify-content:center;background:#1d8fd6;color:#fff}
+.auth-card .btn:disabled{opacity:.6}
+.auth-err{color:#ffb4ab!important;min-height:20px;text-align:center}
 /* ロード画面: 動かすのは transform と opacity だけ */
 .splash{position:fixed;inset:0;z-index:60;display:grid;place-items:center;background:radial-gradient(circle at 50% 42%,#123a5c 0,#07192b 48%,#030a12 100%);color:#fff;opacity:0;transition:opacity .16s ease;pointer-events:none}
 .splash[hidden]{display:none}
@@ -549,6 +563,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 <div class="scrim" id="scrim"></div>
 <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="authv" id="authv" hidden></div>
 <div class="viz" id="viz" role="dialog" aria-label="ビジュアライザー" data-act="vizTap"><canvas id="vizcv"></canvas><canvas id="vizgl" style="display:none"></canvas><div id="vizart"></div>
   <div class="vizui"><div id="vizcap"></div><div class="vizbtns"><button data-act="vizNext" data-d="1" id="vizmode" aria-label="表示を切り替える"></button><button data-act="vizClose" id="vizx">閉じる</button></div></div></div>
 
@@ -582,6 +597,7 @@ star0:"M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18
 heart:"M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z",
 heart0:"M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z",
 folder:"M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z",
+dl:"M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z",
 tune:"M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z",
 viz:"M7 18h2V6H7v12zm4 4h2V2h-2v20zm-8-8h2v-4H3v4zm12 4h2V6h-2v12zm4-8v4h2v-4h-2z",
 people:"M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z",
@@ -958,7 +974,8 @@ const SET_LIST=[
   ['メディア',[['providers','dns','メディアプロバイダ','音楽の置き場所とスキャン'],['outputs','cast','再生先','Chromecast、Google スピーカー、DLNA/UPnP'],['formats','wave','形式と変換','APE、TTA などの扱い'],['web','info','Web の情報','アーティスト画像、アルバム情報、更新の確認']]],
   ['インターフェース',[['theme',...['brush','テーマと配色','配色、カバーアートへの追従']],['home','home','ホーム','ショートカットと表示するセクション'],['np','play','再生中画面','背景、シークバー、評価バー'],['lyrics','lyrics','歌詞','文字の大きさ、ぼかし、取得']]],
   ['再生とミックス',[['mix','mix','ミックス','ミックスの長さと選び方'],['play','vol','再生','音量調整、曲間のつなぎ、キャッシュ'],['effects','tune','エフェクト','イコライザー、空間、真空管、ビジュアライザー']]],
-  ['サーバー',[['server','dns','サーバー情報','NAS の状態、バージョン']]]
+  ['サーバー',[['server','dns','サーバー情報','NAS の状態、バージョン']]],
+  ['アカウント',[['account','people','アカウント','ログイン中の名前、パスワード、家族の追加']]]
 ];
 function genericSettings(key){
   const cfg=SETS[key];
@@ -972,8 +989,10 @@ function genericSettings(key){
 }
 function pageSettings(sub){
   if(!sub){
-    return SET_LIST.map(([g,items])=>`<div class="group">${g}</div><div class="panel">${items.map(([k,i,t,d])=>`<a class="prow" href="${href('settings/'+k)}"><span class="lead">${ico(i,24)}</span><span class="tt"><b>${t}</b><small>${d}</small></span>${ico('chev',20)}</a>`).join('')}</div>`).join('');
+    return SET_LIST.map(([g,items])=>[g,items.filter(i=>isAdmin()&&(LIVE||i[0]!=='account')||LIVE&&!ADMIN_PAGES.includes(i[0]))]).filter(x=>x[1].length).map(([g,items])=>`<div class="group">${g}</div><div class="panel">${items.map(([k,i,t,d])=>`<a class="prow" href="${href('settings/'+k)}"><span class="lead">${ico(i,24)}</span><span class="tt"><b>${t}</b><small>${d}</small></span>${ico('chev',20)}</a>`).join('')}</div>`).join('');
   }
+  if(LIVE&&!isAdmin()&&ADMIN_PAGES.includes(sub))return {title:'設定',back:true,html:'<div class="empty"><b>管理者だけが開けるページです</b></div>'};
+  if(LIVE&&sub==='account')return accountPage();
   if(SETS[sub])return {title:SETS[sub].title,back:true,html:genericSettings(sub)+(LIVE?liveExtra(sub):'')};
   if(sub==='effects')return {title:'エフェクト',back:true,html:LIVE?`<div class="fxbody">${fxBody()}</div>`:'<div class="empty"><b>サーバーから開いたときに使えます</b></div>'};
   if(LIVE&&['providers','outputs','formats','server'].includes(sub))return livePage(sub);
@@ -1128,6 +1147,7 @@ function tedLines(s,c){const m=lyrMain(s,c.data.lyrics);if(!m||!m.lines.some(l=>
   return L;}
 function tedEnter(kind,resume){
   const s=cur(),c=lyrCache.get(s.id);closeSheet();if(!c||!c.data)return;
+  if(!isAdmin()&&!s.local){toast('歌詞の編集は管理者だけができます');return;}
   const L=tedLines(s,c);if(!L){toast('この曲の歌詞はありません');return;}
   const back={lyr:st.lyr,full:st.lyrFull};st.lyr=true;if(isWide())st.lyrFull=true;
   if(kind==='off'){ted={kind,id:s.id,v:lyrOffset(s.id),back};tmpOff=null;}
@@ -1198,7 +1218,7 @@ function buildLyrics(s,c,key){
   else if(ly&&ly.instrumental)o=lyrEmpty(`${ico('note',40)}<b>インストゥルメンタルの曲です</b>`);
   else if(!main||!main.lines.some(l=>l.text))o=lyrEmpty(`${ico('lyrics',40)}<b>この曲の歌詞はありません</b>
       <span>${d&&d.lrclibMiss?'LRCLIB にも見つかりませんでした。':'同じフォルダの .lrc / .ttml、またはタグから読み込みます。'}</span>
-      <span style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">${d&&d.canFetch?`<button class="btn tonal sm" data-act="lyrFetch">${ico('search',18)}LRCLIB で探す</button>`:''}<button class="btn ghost sm" data-act="lyrPaste">${ico('add',18)}貼り付ける</button></span>`);
+      <span style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">${d&&d.canFetch?`<button class="btn tonal sm" data-act="lyrFetch">${ico('search',18)}LRCLIB で探す</button>`:''}${isAdmin()||cur().local?`<button class="btn ghost sm" data-act="lyrPaste">${ico('add',18)}貼り付ける</button>`:''}</span>`);
   else if(!main.synced){
     const r=document.createElement('div');
     r.innerHTML=`<div class="lyr plain fs-${{小:'s',中:'m',大:'l'}[st.set.np_lyrsize]||'m'}" tabindex="0" aria-label="歌詞(同期なし)">${main.lines.map(l=>l.text?`<div class="ul">${esc(l.text)}</div>`:'<div class="ul sp"></div>').join('')}</div>`;
@@ -1340,11 +1360,11 @@ function lyrMenuSheet(){
   const info=ly&&main?`<p class="muted" style="margin:4px 14px 8px;font-size:13px">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${ly.hasWords?'語ごとに同期':ly.synced?'行ごとに同期':'同期なし'} ・ ${main.lines.filter(l=>l.text).length} 行${main.agents&&main.agents.length>1?' ・ 歌い手 '+main.agents.length+' 人':''}</p>`:'';
   openSheet('lyr','歌詞',info
     +(d&&d.canFetch?mi('lyrFetch','search','LRCLIB で探し直す'):'')
-    +mi('lyrPaste','add','歌詞を貼り付ける')
+    +(isAdmin()||s.local?mi('lyrPaste','add','歌詞を貼り付ける')
     +mi('lyrFile','folder','ファイルから読み込む(.lrc / .ttml / .txt)')
     +(ly&&!ly.instrumental?mi('tedSheet','edit','タイミングを編集(タイミング調整の長押し・3 回押しでも開けます)'):'')
     +(d&&d.hasPrev?mi('tedRestore','back','記録・登録する前の歌詞に戻す'):'')
-    +(ly&&ly.source==='manual'?mi('lyrClear','close','手動で登録した歌詞を削除'):'')
+    +(ly&&ly.source==='manual'?mi('lyrClear','close','手動で登録した歌詞を削除'):''):'')
 );
 }
 function lyrPasteSheet(){
@@ -1632,11 +1652,12 @@ function menuSheet(k,id){
       mi('playNextId','play','次に再生',`data-id="${s.id}"`)+mi('queueId','list','キューの最後に追加',`data-id="${s.id}"`)
       +mi('plPick','add','プレイリストに追加',`data-id="${s.id}"`)+mi('fav',s.fav?'heart':'heart0',s.fav?'お気に入りから外す':'お気に入りに追加',`data-id="${s.id}" data-close="1"`)
       +mi('mixInstant','mix','この曲に近い曲でミックス',`data-id="${s.id}"`)+mi('goAlbum','album','アルバムを開く',`data-id="${al.id}"`)+mi('goArtist','people','アーティストを開く',`data-n="${esc(al.a)}"`)
-      +(LIVE&&!s.local?mi('propsSong','info','プロパティ(タグの表示・編集)',`data-id="${s.id}"`):''));
+      +(LIVE&&!s.local?mi('dlSheet','dl','ダウンロード',`data-id="${s.id}"`):'')
+      +(LIVE&&!s.local?mi('propsSong','info',isAdmin()?'プロパティ(タグの表示・編集)':'プロパティ',`data-id="${s.id}"`):''));
   }else{
     const al=AL[+id],c=cx(songsOfAl(al.id).map(s=>s.id));
     openSheet('menu',esc(al.t),mi('playIds','play','再生',`data-cx="${c}"`)+mi('playNextIds','play','次に再生',`data-cx="${c}"`)+mi('queueIds','list','キューの最後に追加',`data-cx="${c}"`)+mi('mixIds','mix','ミックス',`data-cx="${c}" data-t="${esc(al.t)} のミックス"`)+mi('goArtist','people','アーティストを開く',`data-n="${esc(al.a)}"`)
-      +(LIVE&&!al.local?mi('propsAlbum','edit','アルバムのタグ・カバーを編集',`data-id="${al.id}"`):''));
+      +(LIVE&&!al.local&&isAdmin()?mi('propsAlbum','edit','アルバムのタグ・カバーを編集',`data-id="${al.id}"`):''));
   }
 }
 // ---------- プロパティ(タグの表示・編集)。音楽ファイルに書き、前の値はサーバーに残るので元に戻せる ----------
@@ -1656,7 +1677,7 @@ const fmtDate=t=>t?new Date(t*1000).toLocaleString('ja-JP',{year:'numeric',month
 const joinV=v=>v.join('\n');
 function renderProps(){
   if(!props||sheetKind!=='props'||!props.meta)return;
-  const P=props,m=P.meta,song=P.k==='song',ro=!m.writable;
+  const P=props,m=P.meta,song=P.k==='song',ro=!m.writable||!isAdmin();
   const tabs=song?[['tags','タグ'],['all','すべてのタグ'],['cover','カバー'],['file','ファイル']]:[['tags','タグ'],['cover','カバー']];
   let body=`<div class="props"><div class="seg">${tabs.map(([t,l])=>`<button class="chip ${P.tab===t?'pri':''}" data-act="propsTab" data-t="${t}">${l}</button>`).join('')}</div>`;
   if(ro)body+=`<div class="warn">このファイルには書き込めないので、表示だけです(音楽フォルダが読み取り専用でつながれている可能性があります)。</div>`;
@@ -1937,6 +1958,15 @@ const ACT={
   localRemove:d=>localRemove(d.id),
   castStop:()=>castStop(),
   fxSheet:()=>fxSheet(),
+  dlSheet:d=>dlSheet(d.id),
+  dlGo:d=>{const s=SONGS[+d.id];if(!s)return;closeSheet();
+    const a=document.createElement('a');a.href=`${API}/api/tracks/${s.dbid}/download?format=${encodeURIComponent(d.f)}`;a.download='';document.body.appendChild(a);a.click();a.remove();
+    toast(d.f==='original'&&!s.cue?'ダウンロードを始めます':'変換してからダウンロードします(少し時間がかかります)');},
+  acctLogout:()=>api('/api/auth/logout',{method:'POST'}).then(()=>{AUTH.user=null;location.href=location.pathname;}).catch(e=>toast(e.message)),
+  acctPw:()=>api('/api/auth/password',{method:'POST',json:{current:$('#ac-cur').value,new:$('#ac-new').value}}).then(()=>{$('#ac-cur').value='';$('#ac-new').value='';toast('パスワードを変更しました');}).catch(e=>toast(e.message)),
+  userAdd:()=>{const n=$('#ac-name').value.trim();api('/api/users',{method:'POST',json:{name:n,password:$('#ac-pass').value}}).then(()=>{$('#ac-name').value='';$('#ac-pass').value='';toast(`${n} を追加しました`);fillUsers();}).catch(e=>toast(e.message));},
+  userPw:d=>{const v=prompt(`${d.n} の新しいパスワード(8 文字以上)`);if(!v)return;api(`/api/users/${d.id}/password`,{method:'PUT',json:{password:v}}).then(()=>toast(`${d.n} のパスワードを再設定しました。その人は全端末でログアウトします`)).catch(e=>toast(e.message));},
+  userDel:d=>{if(!confirm(`${d.n} を削除しますか? その人の再生記録・お気に入り・プレイリストも消えます。元に戻せません。`))return;api(`/api/users/${d.id}`,{method:'DELETE'}).then(()=>{toast(`${d.n} を削除しました`);fillUsers();}).catch(e=>toast(e.message));},
   fxOn:()=>{fx.on=!fx.on;fxChanged();},
   fxNight:()=>{fx.night=!fx.night;if(fx.night)fx.on=true;fxChanged();},
   fxSet:d=>{if(d.k==='vizMode'){fx.vizMode=d.v;if(viz)vizSetMode(d.v);fxSave();fxMark();return;}fx[d.k]=d.v;if(d.v!=='なし')fx.on=true;fxChanged();},
@@ -2069,6 +2099,7 @@ async function api(path,opt={}){
   const o={...opt,headers:{...(opt.headers||{})}};
   if(o.json!==undefined){o.headers['Content-Type']='application/json';o.body=JSON.stringify(o.json);delete o.json;}
   const r=await fetch(API+path,o);
+  if(r.status===401&&LIVE&&AUTH.user){AUTH.user=null;location.reload();}   // ログインが切れた(別の端末でパスワードを変えたなど)
   if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||('HTTP '+r.status));}
   return r.json();
 }
@@ -2294,7 +2325,7 @@ function onListen(t){
 /* --- Google Cast(Chrome の Cast 機能)。機器は NAS の家の中のアドレス(castUrl)から曲を直接取りに行く。
        キューはこの画面が持つので、画面を開いている間だけ次の曲へ進む --- */
 var castP=null,castC=null,castS=null,castM=null,castUrl='',castT={t:0,at:0},castReady=false;   // st.pos から先に参照されるので var
-var dlnaS=null;   // いま操作している DLNA の機器
+var dlnaS=null,castSeq=0;   // いま操作している DLNA の機器
 function castOn(){return !!(castS||dlnaS);}
 const castBase=()=>(SERVER&&SERVER.castUrl)||location.origin;
 const CAST_MIME={FLAC:'audio/flac',MP3:'audio/mpeg',AAC:'audio/mp4',Vorbis:'audio/ogg',Opus:'audio/ogg',WAV:'audio/wav'};
@@ -2340,10 +2371,14 @@ function castLoad(s,pos,play){
   const mime=tt==='AAC'?'audio/mp4':tt||s.sr>48000?'audio/flac':CAST_MIME[s.codec];
   if(!s.playable||!mime){toast(`${s.codec} は Cast で再生できないので、次の曲へ進みます`);setTimeout(()=>step(1,true),0);return;}
   if(dlnaS){dlnaLoad(s,pos,play);return;}
-  const al=alOf(s),base=castBase(),url=`${base}/api/tracks/${s.dbid}/stream?cast=1`;
+  const seq=++castSeq;st.playing=play!==false;castRender();   // 機器はログインできないので、この曲だけに使える署名付きのアドレスをもらう
+  api(`/api/tracks/${s.dbid}/cast-link`).then(L=>{if(seq===castSeq&&castS)castSend(s,pos,play,mime,L);}).catch(e=>{if(seq===castSeq){st.playing=false;castRender();toast('Cast で再生できませんでした: '+e.message);}});
+}
+function castSend(s,pos,play,mime,L){
+  const al=alOf(s),url=L.url;
   const mi=new chrome.cast.media.MediaInfo(url,mime),md=new chrome.cast.media.MusicTrackMediaMetadata();
   md.title=s.t;md.artist=s.ar||al.a;md.albumName=al.t;
-  if(al.art)md.images=[new chrome.cast.Image(`${base}/api/art/${al.dbid}?size=1000&v=${al.artv||''}`)];
+  if(L.art)md.images=[new chrome.cast.Image(L.art)];
   mi.metadata=md;mi.streamType=chrome.cast.media.StreamType.BUFFERED;
   const req=new chrome.cast.media.LoadRequest(mi);req.currentTime=pos||0;req.autoplay=play!==false;
   castUrl=url;castT={t:pos||0,at:performance.now()};st.playing=play!==false;castRender();
@@ -2435,12 +2470,13 @@ function dlnaPoll(){   // 機器の状態を見て、再生位置と曲の終わ
   }).catch(()=>{d.busy=false;if(dlnaS===d&&++d.fails===5)toast(d.name+' から返事がありません');});
 }
 function dlnaPanel(){
-  const l=DLNA.list,d=dlnaS;
+  if(!AUTH.canDlna)return `<div class="group">DLNA / UPnP</div><div class="panel"><div class="prow"><span class="tt"><b style="font-weight:500">家の中で使えます</b><small>DLNA の機器は家にあるので、家の Wi-Fi のアドレスから開いたときに使えます</small></span></div></div>`;
+  const l=DLNA.list,d=dlnaS,adm=isAdmin();
   if(l===null&&!DLNA.busy)setTimeout(()=>dlnaSearch(false),0);
-  const rows=(l||[]).map(x=>{const on=d&&d.id===x.id;return `<div class="radio" role="radio" aria-checked="${!!on}"><button class="tt" data-act="dlnaPick" data-id="${esc(x.id)}" style="flex:1;min-width:0;display:flex;gap:12px;align-items:center;background:none;border:0;color:inherit;font:inherit;text-align:left;padding:0;cursor:pointer"><span class="dot"></span><span style="min-width:0"><b style="font-weight:500">${esc(x.name)}</b><br><small class="muted">${esc(x.model||'DLNA')} ・ ${esc(x.host)}${on?' ・ 再生中':''}</small></span></button>${on?'<button class="btn ghost sm" data-act="castStop">切断</button>':x.manual?`<button class="btn ghost sm" data-act="dlnaDel" data-id="${esc(x.id)}">削除</button>`:''}</div>`+(on&&x.volume?`<div class="prow"><span class="tt"><b style="font-weight:500">音量</b></span><span class="rng"><input type="range" id="dlnavol" min="0" max="100" value="${d.vol||0}"><output>${d.vol||0}</output></span></div>`:'');}).join('');
+  const rows=(l||[]).map(x=>{const on=d&&d.id===x.id;return `<div class="radio" role="radio" aria-checked="${!!on}"><button class="tt" data-act="dlnaPick" data-id="${esc(x.id)}" style="flex:1;min-width:0;display:flex;gap:12px;align-items:center;background:none;border:0;color:inherit;font:inherit;text-align:left;padding:0;cursor:pointer"><span class="dot"></span><span style="min-width:0"><b style="font-weight:500">${esc(x.name)}</b><br><small class="muted">${esc(x.model||'DLNA')} ・ ${esc(x.host)}${on?' ・ 再生中':''}</small></span></button>${on?'<button class="btn ghost sm" data-act="castStop">切断</button>':x.manual&&adm?`<button class="btn ghost sm" data-act="dlnaDel" data-id="${esc(x.id)}">削除</button>`:''}</div>`+(on&&x.volume?`<div class="prow"><span class="tt"><b style="font-weight:500">音量</b></span><span class="rng"><input type="range" id="dlnavol" min="0" max="100" value="${d.vol||0}"><output>${d.vol||0}</output></span></div>`:'');}).join('');
   return `<div class="group">DLNA / UPnP(ネットワークプレーヤー・AV アンプ)</div><div class="panel">
-    ${rows||`<div class="prow"><span class="tt"><b style="font-weight:500">${l===null||DLNA.busy?'機器を探しています…':'機器が見つかりません'}</b><small>同じネットワークの機器を探します。電源を入れて「探す」を押すか、IP アドレスを入力してください</small></span></div>`}
-    <div class="prow" style="flex-wrap:wrap;gap:8px"><input id="dlnaaddr" placeholder="機器の IP アドレス(例: 192.168.0.50)" autocomplete="off" style="flex:1;min-width:200px"><button class="btn ghost sm" data-act="dlnaAdd">${ico('add',18)}追加</button><button class="btn ghost sm" data-act="dlnaFind" ${DLNA.busy?'disabled':''}>${ico('refresh',18)}探す</button></div></div>
+    ${rows||`<div class="prow"><span class="tt"><b style="font-weight:500">${l===null||DLNA.busy?'機器を探しています…':'機器が見つかりません'}</b><small>同じネットワークの機器を探します。電源を入れて「探す」を押してください</small></span></div>`}
+    <div class="prow" style="flex-wrap:wrap;gap:8px">${adm?`<input id="dlnaaddr" placeholder="機器の IP アドレス(例: 192.168.0.50)" autocomplete="off" style="flex:1;min-width:200px"><button class="btn ghost sm" data-act="dlnaAdd">${ico('add',18)}追加</button>`:''}<button class="btn ghost sm" data-act="dlnaFind" ${DLNA.busy?'disabled':''}>${ico('refresh',18)}探す</button></div></div>
   ${l&&!DLNA.castUrl?`<p class="muted" style="font-size:13px;margin:10px 4px;color:var(--err)">機器が曲を取りに来るアドレスがありません。NAS の .env の OTOKURA_CAST_URL に、家の中のアドレス(例: http://192.168.0.252:8686)を書いてください。</p>`:''}
   <p class="muted" style="font-size:13px;margin:10px 4px">DLNA でも、次の曲へ進むのはこの画面を開いている間です。音量の自動調整とつなぎは効きません。</p>`;
 }
@@ -2451,7 +2487,7 @@ const webUrl=(kind,id,fetch)=>kind==='artist'?`/api/artists/info?name=${encodeUR
 function webHtml(kind,id){
   const w=WEBINFO.get(kind+id);if(!w||w.status==='missing')return '';
   if(w.status==='pending')return `<p class="muted" style="font-size:13px">Web の情報を探しています…</p>`;
-  const refresh=`<button class="ib" data-act="webRefresh" data-k="${kind}" data-id="${esc(String(id))}" aria-label="Web の情報を取り直す" title="Web の情報を取り直す">${ico('refresh',18)}</button>`;
+  const refresh=!isAdmin()?'':`<button class="ib" data-act="webRefresh" data-k="${kind}" data-id="${esc(String(id))}" aria-label="Web の情報を取り直す" title="Web の情報を取り直す">${ico('refresh',18)}</button>`;
   if(w.status==='none')return `<div class="wfoot"><small class="muted">Web に情報が見つかりませんでした</small>${refresh}</div>`;
   const KIND={Album:'アルバム',Single:'シングル',EP:'EP',Broadcast:'放送',Other:'その他'};
   const facts=kind==='album'?[w.releaseDate&&'発売日 '+w.releaseDate,w.kind&&(KIND[w.kind]||w.kind),w.label].filter(Boolean):[];
@@ -2474,7 +2510,7 @@ function webLoad(kind,id,tries=0,after=null){   // after: 取り直しの前の�
   }).catch(()=>{});
 }
 function liveExtra(sub){
-  if(sub!=='play'&&sub!=='web')return '';
+  if((sub!=='play'&&sub!=='web')||!isAdmin())return '';
   setTimeout(()=>fillExtra(sub),0);return `<div id="liveextra" data-sub="${sub}"></div>`;
 }
 let extraTimer=null;
@@ -2721,7 +2757,7 @@ function emptyLib(){
   const sc=SERVER&&SERVER.scan,missing=SERVER?SERVER.sources.filter(x=>!x.ok):[];
   return `<div class="empty" style="padding-top:72px">${ico('lib',48)}<b style="margin-top:12px;font-size:18px">ライブラリはまだ空です</b>
     <span id="emptyscan">${sc&&sc.running?'スキャンしています…':missing.length?`見つからないフォルダがあります: ${missing.map(x=>esc(x.name)).join('、')}`:'音楽フォルダをスキャンすると、ここにアルバムが並びます。'}</span>
-    <div class="acts" style="justify-content:center;margin-top:16px"><button class="btn" data-act="scan">${ico('refresh',18)}今すぐスキャン</button><a class="btn ghost" href="#/settings/providers">メディアプロバイダ</a></div></div>`;
+    ${isAdmin()?`<div class="acts" style="justify-content:center;margin-top:16px"><button class="btn" data-act="scan">${ico('refresh',18)}今すぐスキャン</button><a class="btn ghost" href="#/settings/providers">メディアプロバイダ</a></div>`:''}</div>`;
 }
 
 /* --- プレイリストの作成 --- */
@@ -2757,6 +2793,75 @@ function mockFinish(){
     s.rel=`${al.a}/${al.t} (${al.y})/${String(s.n).padStart(2,'0')} ${s.t}.${extOf(al)}`;});
 }
 
+/* --- ログイン。アカウントは音蔵の中だけのもので、NAS のユーザーとは別 --- */
+let AUTH={user:null,canDlna:true};
+const isAdmin=()=>!LIVE||!!(AUTH.user&&AUTH.user.role==='admin');
+const ADMIN_PAGES=['providers','server','web'];
+async function authGate(){
+  const r=await fetch(API+'/api/auth/state');if(!r.ok)throw new Error('HTTP '+r.status);
+  const s=await r.json();AUTH=s;if(s.user)return;
+  await new Promise(done=>authForm(s,done));
+}
+function authForm(s,done){
+  const sp=$('#splash'),box=$('#authv');sp.hidden=true;box.hidden=false;
+  let last='';try{last=localStorage.getItem('otokura.lastUser')||'';}catch(e){}
+  let who=s.names.includes(last)?last:(s.names.length===1?s.names[0]:'');
+  const finish=a=>{AUTH=a;try{localStorage.setItem('otokura.lastUser',a.user.name);}catch(e){}box.hidden=true;box.innerHTML='';sp.className='splash boot';sp.hidden=false;loaderMsg('');done();};
+  const logo='<div class="auth-logo"><svg viewBox="60 110 392 330" width="72" height="72" aria-hidden="true" fill="#fff"><path d="M108 318 V262 L256 132 L404 262 V318" fill="none" stroke="#fff" stroke-width="32" stroke-linejoin="round" stroke-linecap="round"/><rect x="88" y="290" width="76" height="128" rx="32"/><rect x="348" y="290" width="76" height="128" rx="32"/><rect x="216" y="344" width="18" height="50" rx="9"/><rect x="246" y="304" width="18" height="90" rx="9"/><rect x="276" y="330" width="18" height="64" rx="9"/></svg><b>音蔵</b></div>';
+  const send=async(path,json,btn)=>{
+    btn.disabled=true;const m=box.querySelector('.auth-err');m.textContent='';
+    try{const r=await fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(json)});
+      const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||('HTTP '+r.status));finish(j);}
+    catch(e){m.textContent=e.message;btn.disabled=false;}
+  };
+  if(s.needsSetup){
+    box.innerHTML=`<form class="auth-card" autocomplete="off">${logo}<h1>最初の管理者を登録</h1><p>確認コードは NAS の音蔵のデータフォルダの setup-code.txt にあります。</p>
+      <label>確認コード<input id="au-code" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label>名前<input id="au-name" required maxlength="40" autocomplete="username"></label>
+      <label>パスワード(8 文字以上)<input id="au-pw" type="password" required minlength="8" autocomplete="new-password"></label>
+      <button class="btn" type="submit">登録して始める</button><p class="auth-err" role="alert"></p></form>`;
+    box.querySelector('form').addEventListener('submit',e=>{e.preventDefault();send('/api/auth/setup',{code:$('#au-code').value,name:$('#au-name').value,password:$('#au-pw').value},e.target.querySelector('button[type=submit]'));});
+    return;
+  }
+  const draw=()=>{
+    box.innerHTML=`<form class="auth-card">${logo}<div class="auth-names" role="radiogroup" aria-label="名前">${s.names.map(n=>`<button type="button" class="chip" role="radio" data-n="${esc(n)}" aria-checked="${n===who}" aria-pressed="${n===who}">${esc(n)}</button>`).join('')}</div>
+      <input type="text" autocomplete="username" value="${esc(who)}" hidden>
+      <label>パスワード<input id="au-pw" type="password" required autocomplete="current-password"></label>
+      <button class="btn" type="submit">ログイン</button><p class="auth-err" role="alert"></p></form>`;
+    box.querySelectorAll('[data-n]').forEach(b=>b.addEventListener('click',()=>{who=b.dataset.n;draw();$('#au-pw').focus();}));
+    box.querySelector('form').addEventListener('submit',e=>{e.preventDefault();
+      if(!who){box.querySelector('.auth-err').textContent='名前を選んでください';return;}
+      send('/api/auth/login',{name:who,password:$('#au-pw').value},e.target.querySelector('button[type=submit]'));});
+    if(who)$('#au-pw').focus();
+  };
+  draw();
+}
+function accountPage(){
+  setTimeout(fillUsers,0);
+  const u=AUTH.user||{name:'',role:''};
+  return {title:'アカウント',back:true,html:`<div class="panel"><div class="prow"><span class="tt"><b>${esc(u.name)}</b><small>${u.role==='admin'?'管理者':'家族'}</small></span><button class="btn ghost sm" data-act="acctLogout">ログアウト</button></div></div>
+   <div class="group">パスワードの変更</div><div class="panel"><div class="form"><label>今のパスワード<input id="ac-cur" type="password" autocomplete="current-password"></label><label>新しいパスワード(8 文字以上)<input id="ac-new" type="password" autocomplete="new-password"></label><div class="full"><button class="btn" data-act="acctPw">変更する</button></div></div></div>
+   ${isAdmin()?`<div class="group">アカウントの一覧</div><div class="panel" id="acctlist"></div>
+   <div class="group">アカウントを追加</div><div class="panel"><div class="form"><label>名前<input id="ac-name" maxlength="40" autocomplete="off"></label><label>パスワード(8 文字以上)<input id="ac-pass" type="password" autocomplete="new-password"></label><div class="full"><button class="btn" data-act="userAdd">${ico('add',20)}追加する</button></div></div></div>
+   <p class="muted" style="font-size:13px;margin:10px 4px">家族は曲を聴く・ダウンロードする・自分のプレイリストを作ることができます。タグの編集やスキャン、NAS のファイルには触れません。再生回数やお気に入りは人ごとに別です。</p>`:''}`};
+}
+async function fillUsers(){
+  const box=$('#acctlist');if(!box)return;
+  try{const l=await api('/api/users');
+    box.innerHTML=l.map(u=>`<div class="prow" style="flex-wrap:wrap;gap:8px"><span class="tt" style="min-width:120px"><b style="font-weight:500">${esc(u.name)}</b><small>${u.role==='admin'?'管理者':'家族'}</small></span><button class="btn ghost sm" data-act="userPw" data-id="${u.id}" data-n="${esc(u.name)}">パスワードを再設定</button>${u.id===AUTH.user.id?'':`<button class="btn ghost sm" data-act="userDel" data-id="${u.id}" data-n="${esc(u.name)}">削除</button>`}</div>`).join('');
+  }catch(e){box.innerHTML=`<div class="prow"><span class="tt"><small>${esc(e.message)}</small></span></div>`;}
+}
+/* --- ダウンロード。元のファイルか、選んだ形式に変換したもの(タグとカバーも入る) --- */
+const DL_LOSSLESS=['FLAC','WAV','AIFF','ALAC','APE','TTA','WavPack','TAK','DSD'];
+const DL_FORMATS=[['flac','FLAC','可逆(音質そのまま)・大きめ','FLAC',true],['wav','WAV','可逆・無圧縮・とても大きい','WAV',true],['mp3','MP3 320kbps','どの機器でも再生できる','MP3',false],['aac','AAC 256kbps(M4A)','iPhone・Apple の機器向け','AAC',false],['opus','Opus 192kbps','小さくて高音質。対応機器は少なめ','Opus',false]];
+function dlSheet(id){
+  const s=SONGS[+id];if(!s)return;
+  const orig=s.cue?`${s.fmt}(この曲の区間だけを切り出します)`:`${s.fmt}(音質もタグもそのまま)`;
+  // 非可逆の曲を可逆にしても音質は上がらず、同じ形式への変換は音質が落ちるだけなので出さない
+  const list=DL_FORMATS.filter(f=>f[3]!==s.codec&&(!f[4]||DL_LOSSLESS.includes(s.codec)));
+  const row=(k,t,d)=>`<button class="mi" data-act="dlGo" data-id="${s.id}" data-f="${k}">${ico('dl',22)}<span>${esc(t)}<small>${esc(d)}</small></span></button>`;
+  openSheet('dl',`ダウンロード: ${esc(s.t)}`,row('original','元のファイル',orig)+list.map(f=>row(f[0],f[1],f[2])).join(''));
+}
 /* --- エフェクト(イコライザー・空間・エコー・真空管・夜間モード)。すべてこの端末の中の Web Audio で処理する。
        オンにするまで AudioContext を作らず、今までどおり audio 要素から直接鳴らす(画面を消したときの動きを変えないため)。
        一度つないだ audio 要素は元に戻せないので、全部オフのときは素通しの経路にする。設定は端末ごとに localStorage に持つ --- */
@@ -3094,6 +3199,7 @@ const BOOT_T0=performance.now();
 (async function boot(){
   if(LIVE){
     try{
+      await authGate();
       SERVER=await api('/api/server');serverAt=Date.now();
       loaderMsg('ライブラリを読み込んでいます');
       await loadLibrary();await loadPlaylists();
