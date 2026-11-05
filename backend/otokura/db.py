@@ -54,6 +54,14 @@ CREATE TABLE IF NOT EXISTS users (
   role        TEXT NOT NULL,             -- admin / member
   created_at  REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS passkeys (     -- 指紋・PIN のログイン。公開鍵だけを置く
+  id          TEXT PRIMARY KEY,
+  user_id     INTEGER NOT NULL,
+  public_key  BLOB NOT NULL,
+  sign_count  INTEGER NOT NULL,
+  label       TEXT NOT NULL,             -- Android / Windows など。自分で見分けるため
+  created_at  REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash  TEXT PRIMARY KEY,
   user_id     INTEGER NOT NULL,
@@ -154,6 +162,13 @@ class Database:
                     "rg_track REAL", "rg_album REAL"):         # ReplayGain のタグ(dB。-18 LUFS 基準)
             try:
                 c.execute(f"ALTER TABLE tracks ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
+        for col in ("must_change INTEGER NOT NULL DEFAULT 0",  # 管理者が作ったパスワードのまま。本人が変えるまで API を使えない
+                    "totp_secret TEXT", "totp_pending TEXT",   # 二重認証の鍵(確定済み・登録の途中)
+                    "totp_last INTEGER NOT NULL DEFAULT 0"):   # 最後に使ったコードの時間の番号(同じコードを 2 回使わせない)
+            try:
+                c.execute(f"ALTER TABLE users ADD COLUMN {col}")
             except sqlite3.OperationalError:
                 pass
         c.commit()

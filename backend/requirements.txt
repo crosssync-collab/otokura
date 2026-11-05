@@ -5,3 +5,5 @@ mutagen==1.48.1
 pillow==12.3.0
 httpx==0.28.1
 python-multipart==0.0.32
+segno==1.6.6
+webauthn==3.0.1

@@ -28,7 +28,7 @@ def client(app, ip="192.168.0.10"):
     return TestClient(app, client=(ip, 50000))
 
 
-def setup_admin(app, cfg):
+def setup_admin_raw(app, cfg):
     c = client(app)
     code = (cfg.data_dir / "setup-code.txt").read_text().strip()
     r = c.post("/api/auth/setup", json={"code": code, "name": "cross", "password": PW})
@@ -36,10 +36,34 @@ def setup_admin(app, cfg):
     return c
 
 
+def setup_admin(app, cfg):
+    """認証アプリの登録まで済ませた管理者。"""
+    from otokura.auth import TOTP_STEP, totp_code
+    c = setup_admin_raw(app, cfg)
+    secret = c.post("/api/auth/totp/start", json={"password": PW}).json()["secret"]
+    r = c.post("/api/auth/totp/confirm", json={"code": totp_code(secret, int(time.time()) // TOTP_STEP)})
+    assert r.status_code == 200, r.text
+    c.totp_secret = secret
+    return c
+
+
+def login_admin(c, cfg, admin, password=PW):
+    """認証アプリのコードを付けてログインする(同じコードは使えないので、試験の間は使用済みの記録を消す)。"""
+    from otokura.auth import TOTP_STEP, totp_code
+    db = sqlite3.connect(cfg.db_path)
+    db.execute("UPDATE users SET totp_last=0 WHERE name='cross'")
+    db.commit()
+    db.close()
+    return c.post("/api/auth/login", json={"name": "cross", "password": password, "code": totp_code(admin.totp_secret, int(time.time()) // TOTP_STEP)})
+
+
 def add_member(app, admin, name="妻", ip="192.168.0.11"):
-    assert admin.post("/api/users", json={"name": name, "password": PW}).status_code == 200
+    """最初のパスワード変更まで済ませた家族。以後のパスワードは PW。"""
+    first = "temporary phrase"
+    assert admin.post("/api/users", json={"name": name, "password": first}).status_code == 200
     m = client(app, ip)
-    assert m.post("/api/auth/login", json={"name": name, "password": PW}).status_code == 200
+    assert m.post("/api/auth/login", json={"name": name, "password": first}).status_code == 200
+    assert m.post("/api/auth/password", json={"current": first, "new": PW}).status_code == 200
     return m
 
 
@@ -77,7 +101,7 @@ def test_setup_needs_the_code_and_only_works_once(env):
 
 def test_password_is_hashed_and_login_is_rate_limited(env):
     app, cfg, _ = env
-    setup_admin(app, cfg)
+    admin = setup_admin(app, cfg)
     raw = sqlite3.connect(cfg.db_path).execute("SELECT pw_hash FROM users").fetchone()[0]
     assert PW not in raw and raw.startswith("scrypt$")
     c = client(app, "192.168.0.50")
@@ -85,7 +109,7 @@ def test_password_is_hashed_and_login_is_rate_limited(env):
     assert codes[:5] == [401] * 5 and codes[5] == 429
     # 正しいパスワードでも待ち時間中は通さない。別の端末は巻き込まない
     assert c.post("/api/auth/login", json={"name": "cross", "password": PW}).status_code == 429
-    assert client(app, "192.168.0.51").post("/api/auth/login", json={"name": "cross", "password": PW}).status_code == 200
+    assert login_admin(client(app, "192.168.0.51"), cfg, admin).status_code == 200
     assert client(app, "192.168.0.52").post("/api/auth/login", json={"name": "いない人", "password": PW}).status_code == 401
 
 
@@ -125,6 +149,7 @@ def test_login_and_records_do_not_wait_for_a_running_scan(env, monkeypatch):
     from otokura import metadata
     app, cfg, _ = env
     admin = setup_admin(app, cfg)
+    add_member(app, admin)
     t = ids(admin)[0]
     real = metadata.read
 
@@ -137,7 +162,7 @@ def test_login_and_records_do_not_wait_for_a_running_scan(env, monkeypatch):
     time.sleep(2.2)         # 1 曲目を書いたあと、2 曲目を読んでいるところ
     t0 = time.time()
     assert admin.post(f"/api/tracks/{t}/played").status_code == 200
-    assert client(app).post("/api/auth/login", json={"name": "cross", "password": PW}).status_code == 200
+    assert client(app).post("/api/auth/login", json={"name": "妻", "password": PW}).status_code == 200
     took = time.time() - t0
     th.join(30)
     assert took < 5, f"{took:.1f} 秒待たされた"
@@ -146,9 +171,9 @@ def test_login_and_records_do_not_wait_for_a_running_scan(env, monkeypatch):
 
 def test_session_cookie_flags_and_logout(env):
     app, cfg, _ = env
-    setup_admin(app, cfg)
+    admin = setup_admin(app, cfg)
     c = client(app)
-    r = c.post("/api/auth/login", json={"name": "cross", "password": PW})
+    r = login_admin(c, cfg, admin)
     cookie = r.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=lax" in cookie and "max-age=31536000" in cookie
     token = r.cookies.get("otokura_s")
@@ -404,7 +429,8 @@ def test_admin_password_reset_with_code_from_nas(env):
     assert c.post("/api/auth/reset", json={"code": code, "password": NEW}).status_code == 403 and not path.exists()
     code = A.write_reset_code(cfg.data_dir)
     r = c.post("/api/auth/reset", json={"code": code, "password": NEW})
-    assert r.status_code == 200 and r.json()["user"]["role"] == "admin" and c.get("/api/users").status_code == 200   # そのままログイン
+    assert r.status_code == 200 and r.json()["user"]["role"] == "admin"   # そのままログイン。認証アプリは登録し直す
+    assert r.json()["user"]["needsSecond"] is True and c.get("/api/users").status_code == 403
     assert not path.exists()
     assert admin.get("/api/library").status_code == 401                               # 前のログインは切れる
     assert client(app).post("/api/auth/login", json={"name": "cross", "password": PW}).status_code == 401
@@ -440,7 +466,7 @@ def test_dlna_for_family_only_from_home(env):
         assert out.get("/api/dlna/devices").status_code == 403, ip
         assert out.post("/api/dlna/x/load", json={"trackId": 1}).status_code == 403, ip
     away = client(app, "100.101.102.104")                                            # 管理者は外からでも使える
-    assert away.post("/api/auth/login", json={"name": "cross", "password": PW}).status_code == 200
+    assert login_admin(away, cfg, admin).status_code == 200
     assert away.get("/api/auth/state").json()["canDlna"] is True
 
 
@@ -526,6 +552,6 @@ def test_old_database_moves_to_first_admin(tmp_path):
     # もう一度起動しても二重に移さない
     app2 = create_app(cfg, start_background=False)
     c2 = client(app2)
-    assert c2.post("/api/auth/login", json={"name": "cross", "password": PW}).status_code == 200
+    assert login_admin(c2, cfg, admin).status_code == 200
     j = c2.get("/api/library").json()
     assert dict(zip(j["trackColumns"], j["tracks"][0]))["plays"] == 7

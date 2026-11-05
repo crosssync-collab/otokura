@@ -483,7 +483,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 
 .toast{position:fixed;left:50%;bottom:150px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 18px;border-radius:14px;font-size:14px;z-index:40;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center}
 .toast.show{opacity:1}
-.authv{position:fixed;inset:0;z-index:70;display:grid;place-items:center;overflow:auto;padding:20px;background:radial-gradient(circle at 50% 30%,#123a5c 0,#07192b 52%,#030a12 100%);color:#fff}
+.authv{position:fixed;inset:0;z-index:70;display:grid;place-items:safe center;overflow:auto;padding:20px;background:radial-gradient(circle at 50% 30%,#123a5c 0,#07192b 52%,#030a12 100%);color:#fff}
 .authv[hidden]{display:none}
 .auth-card{display:flex;flex-direction:column;gap:14px;width:min(360px,100%)}
 .auth-card h1{font-size:19px;margin:0;text-align:center}.auth-card p{margin:0;font-size:13px;color:#a8d4f2;line-height:1.6}
@@ -492,7 +492,10 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .auth-card input{min-height:46px;padding:0 14px;border-radius:12px;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.08);color:#fff;font:inherit;font-size:16px}
 .auth-card input:focus{outline:2px solid #3db4ff;outline-offset:1px}
 .auth-card .btn{min-height:46px;justify-content:center;background:#1d8fd6;color:#fff}
-.auth-card .btn:disabled{opacity:.6}
+.auth-card .btn:disabled{opacity:.6}.auth-card .btn[hidden]{display:none}
+.auth-qr{width:fit-content;margin:0 auto;padding:6px;border-radius:12px;background:#fff;line-height:0}.auth-qr svg{display:block;width:min(220px,60vw);height:auto}
+.auth-card a.btn{display:flex;align-items:center;text-decoration:none}
+.auth-code{padding:14px;border-radius:12px;background:rgba(255,255,255,.1);font:700 clamp(32px,8vw,48px)/1.2 var(--mono,ui-monospace,monospace);letter-spacing:.06em;text-align:center}
 .auth-err{color:#ffb4ab!important;min-height:20px;text-align:center}
 .auth-links{display:flex;justify-content:center;gap:20px;font-size:13px}
 .auth-links a,.auth-links button{color:#a8d4f2;background:none;border:0;padding:8px;font:inherit;text-decoration:underline;cursor:pointer}
@@ -1963,10 +1966,13 @@ const ACT={
   dlGo:d=>{const s=SONGS[+d.id];if(!s)return;closeSheet();
     const a=document.createElement('a');a.href=`${API}/api/tracks/${s.dbid}/download?format=${encodeURIComponent(d.f)}`;a.download='';document.body.appendChild(a);a.click();a.remove();
     toast(d.f==='original'&&!s.cue?'ダウンロードを始めます':'変換してからダウンロードします(少し時間がかかります)');},
+  passkeyAdd:()=>passkeyOverlay(),deviceApprove:()=>deviceApprove(),
+  passkeyDel:d=>{const pw=prompt('外すため、今のパスワードを入れてください');if(!pw)return;api('/api/auth/passkey/remove',{method:'POST',json:{id:d.id,password:pw}}).then(()=>{toast('外しました');return authRefresh();}).catch(e=>toast(e.message));},
+  totpOn:()=>totpOverlay(false),totpOff:()=>totpOverlay(true),
   acctLogout:()=>api('/api/auth/logout',{method:'POST'}).then(()=>{AUTH.user=null;location.href=location.pathname;}).catch(e=>toast(e.message)),
   acctPw:()=>api('/api/auth/password',{method:'POST',json:{current:$('#ac-cur').value,new:$('#ac-new').value}}).then(()=>{$('#ac-cur').value='';$('#ac-new').value='';toast('パスワードを変更しました');}).catch(e=>toast(e.message)),
   userAdd:()=>{const n=$('#ac-name').value.trim();api('/api/users',{method:'POST',json:{name:n,password:$('#ac-pass').value}}).then(()=>{$('#ac-name').value='';$('#ac-pass').value='';toast(`${n} を追加しました`);fillUsers();}).catch(e=>toast(e.message));},
-  userPw:d=>{const v=prompt(`${d.n} の新しいパスワード(10 文字以上)`);if(!v)return;api(`/api/users/${d.id}/password`,{method:'PUT',json:{password:v}}).then(()=>toast(`${d.n} のパスワードを再設定しました。その人は全端末でログアウトします`)).catch(e=>toast(e.message));},
+  userPw:d=>{const v=prompt(`${d.n} の新しいパスワード(10 文字以上)`);if(!v)return;api(`/api/users/${d.id}/password`,{method:'PUT',json:{password:v}}).then(()=>toast(`${d.n} のパスワードを再設定しました。全端末でログアウトし、次のログインで本人が変えます。指紋と認証アプリの登録も消えます`)).catch(e=>toast(e.message));},
   userDel:d=>{if(!confirm(`${d.n} を削除しますか? その人の再生記録・お気に入り・プレイリストも消えます。元に戻せません。`))return;api(`/api/users/${d.id}`,{method:'DELETE'}).then(()=>{toast(`${d.n} を削除しました`);fillUsers();}).catch(e=>toast(e.message));},
   fxOn:()=>{fx.on=!fx.on;fxChanged();},
   fxNight:()=>{fx.night=!fx.night;if(fx.night)fx.on=true;fxChanged();},
@@ -2918,22 +2924,157 @@ const isAdmin=()=>!LIVE||!!(AUTH.user&&AUTH.user.role==='admin');
 const ADMIN_PAGES=['providers','server','web'];
 async function authGate(){
   const r=await fetch(API+'/api/auth/state');if(!r.ok)throw new Error('HTTP '+r.status);
-  const s=await r.json();AUTH=s;if(s.user)return;
+  const s=await r.json();AUTH=s;if(s.user&&!authPending(s.user))return;
   await new Promise(done=>authForm(s,done));
+}
+const authPending=u=>!!(u&&(u.mustChange||u.needsSecond));   // 本人のパスワード変更・管理者の認証アプリの登録が済むまで、サーバーは API を開けない
+const AUTH_LOGO='<div class="auth-logo"><svg viewBox="60 110 392 330" width="72" height="72" aria-hidden="true" fill="#fff"><path d="M108 318 V262 L256 132 L404 262 V318" fill="none" stroke="#fff" stroke-width="32" stroke-linejoin="round" stroke-linecap="round"/><rect x="88" y="290" width="76" height="128" rx="32"/><rect x="348" y="290" width="76" height="128" rx="32"/><rect x="216" y="344" width="18" height="50" rx="9"/><rect x="246" y="304" width="18" height="90" rx="9"/><rect x="276" y="330" width="18" height="64" rx="9"/></svg><b>音蔵</b></div>';
+const authFree=`<div class="auth-links"><button type="button" data-auth-out>ログアウト</button></div>`;
+function authOut(box){const b=box.querySelector('[data-auth-out]');if(b)b.addEventListener('click',()=>fetch(API+'/api/auth/logout',{method:'POST'}).finally(()=>{location.href=location.pathname;}));}
+// 指紋・PIN(パスキー)。IP アドレスの http ではブラウザが使わせない
+const b64u={dec:s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0)),enc:b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')};
+const passkeyOK=()=>!!window.PublicKeyCredential&&isSecureContext&&!/^[\d.]+$|:/.test(location.hostname);
+const passkeyMsg=e=>e.name==='NotAllowedError'?'指紋を確かめられませんでした。もう一度押すか、この端末で登録していなければパスワードを使ってください':e.message;
+const passkeyHere=v=>{try{if(v)localStorage.setItem('otokura.passkey','1');return localStorage.getItem('otokura.passkey')==='1';}catch(e){return false;}};
+async function passkeyAdd(password){
+  const j=await api('/api/auth/passkey/register/start',{method:'POST',json:{password}}),o=j.options;
+  const c=await navigator.credentials.create({publicKey:{...o,challenge:b64u.dec(o.challenge),user:{...o.user,id:b64u.dec(o.user.id)},excludeCredentials:(o.excludeCredentials||[]).map(x=>({...x,id:b64u.dec(x.id)}))}});
+  await api('/api/auth/passkey/register/finish',{method:'POST',json:{challengeId:j.challengeId,credential:{id:c.id,rawId:b64u.enc(c.rawId),type:c.type,clientExtensionResults:c.getClientExtensionResults(),
+    response:{clientDataJSON:b64u.enc(c.response.clientDataJSON),attestationObject:b64u.enc(c.response.attestationObject)}}}});
+  passkeyHere(true);
+}
+async function passkeyAsk(o){
+  const c=await navigator.credentials.get({publicKey:{...o,challenge:b64u.dec(o.challenge),allowCredentials:(o.allowCredentials||[]).map(x=>({...x,id:b64u.dec(x.id)}))}});
+  return {id:c.id,rawId:b64u.enc(c.rawId),type:c.type,clientExtensionResults:c.getClientExtensionResults(),
+    response:{clientDataJSON:b64u.enc(c.response.clientDataJSON),authenticatorData:b64u.enc(c.response.authenticatorData),signature:b64u.enc(c.response.signature),userHandle:c.response.userHandle?b64u.enc(c.response.userHandle):null}};
+}
+// 認証アプリの登録: パスワードの確認 → QR コード → 今のコードで確かめる。登録の画面とアカウントの画面で使う
+function totpSetup(box,known,done,foot){
+  const show=j=>{
+    box.innerHTML=`<form class="auth-card" autocomplete="off">${AUTH_LOGO}<h1>認証アプリを登録</h1>
+      <p>Google Authenticator などの認証アプリで、この QR コードを読み取ります。アプリを入れたスマホで見ているときは、下のボタンを押します。</p>
+      <div class="auth-qr">${j.qr}</div>
+      <a class="btn ghost" id="tf-app" href="${esc(j.uri)}">このスマホの認証アプリで開く</a>
+      <p>どちらもできないときは、このキーをアプリに入力します。</p><code class="auth-cmd" id="tf-key">${esc(j.secret)}</code>
+      <label>アプリに出た 6 桁のコード<input id="tf-code" required inputmode="numeric" autocomplete="one-time-code" maxlength="7"></label>
+      <button class="btn" type="submit">確かめて登録</button><p class="auth-err" role="alert"></p>${foot}</form>`;
+    authOut(box);
+    box.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]'),m=box.querySelector('.auth-err');btn.disabled=true;m.textContent='';
+      try{await api('/api/auth/totp/confirm',{method:'POST',json:{code:$('#tf-code').value}});done();}catch(er){m.textContent=er.message;btn.disabled=false;}});
+  };
+  const ask=()=>{
+    box.innerHTML=`<form class="auth-card" autocomplete="off">${AUTH_LOGO}<h1>認証アプリを登録</h1><p>本人の確認のため、今のパスワードを入れてください。</p>
+      <label>今のパスワード<input id="tf-pw" type="password" required autocomplete="current-password"></label>
+      <button class="btn" type="submit">次へ</button><p class="auth-err" role="alert"></p>${foot}</form>`;
+    authOut(box);
+    box.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]'),m=box.querySelector('.auth-err');btn.disabled=true;m.textContent='';
+      try{show(await api('/api/auth/totp/start',{method:'POST',json:{password:$('#tf-pw').value}}));}catch(er){m.textContent=er.message;btn.disabled=false;}});
+  };
+  if(!known){ask();return;}
+  api('/api/auth/totp/start',{method:'POST',json:{password:known}}).then(show).catch(ask);
+}
+async function authRefresh(){const s=await api('/api/auth/state');AUTH=s;if(authPending(s.user)){location.reload();return;}refresh();}
+function passkeyOverlay(){
+  const box=$('#authv');box.hidden=false;
+  const close=()=>{box.hidden=true;box.innerHTML='';};
+  box.innerHTML=`<form class="auth-card" autocomplete="off">${AUTH_LOGO}<h1>この端末の指紋を登録</h1><p>スマホは指紋、Windows は PIN を使います。本人の確認のため、今のパスワードを入れてください。</p>
+    <label>今のパスワード<input id="pk-pw" type="password" required autocomplete="current-password"></label>
+    <button class="btn" type="submit">登録</button><p class="auth-err" role="alert"></p><div class="auth-links"><button type="button" data-auth-close>やめる</button></div></form>`;
+  box.querySelector('[data-auth-close]').addEventListener('click',close);
+  box.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]'),m=box.querySelector('.auth-err');btn.disabled=true;m.textContent='';
+    try{await passkeyAdd($('#pk-pw').value);close();await authRefresh();}catch(er){m.textContent=passkeyMsg(er);btn.disabled=false;}});
+}
+async function deviceApprove(){
+  const el=$('#dv-code'),code=el.value.trim();if(!code){toast('テレビに出たコードを入れてください');return;}
+  const u=AUTH.user;let body={code};
+  try{
+    if(u.passkeys&&passkeyOK()){const j=await api('/api/auth/passkey/confirm/start',{method:'POST'});body={...body,challengeId:j.challengeId,credential:await passkeyAsk(j.options)};}
+    else{const pw=prompt('承認するため、今のパスワードを入れてください');if(!pw)return;body.password=pw;
+      if(u.totp){const t=prompt('認証アプリの 6 桁のコードを入れてください');if(!t)return;body.totp=t;}}
+    await api('/api/auth/device/approve',{method:'POST',json:body});el.value='';toast('テレビのログインを承認しました');
+  }catch(e){toast(passkeyMsg(e));}
+}
+async function fillPasskeys(){
+  const box=$('#pklist');if(!box)return;
+  try{const l=await api('/api/auth/passkeys');
+    box.innerHTML=l.length?l.map(k=>`<div class="prow"><span class="tt"><b style="font-weight:500">${esc(k.label)}</b><small>${new Date(k.createdAt*1000).toLocaleDateString('ja-JP')} に登録</small></span><button class="btn ghost sm" data-act="passkeyDel" data-id="${esc(k.id)}">外す</button></div>`).join(''):'';
+  }catch(e){box.innerHTML='';}
+}
+// アカウントの画面から開くとき。閉じると元の画面に戻る
+function totpOverlay(off){
+  const box=$('#authv'),close=()=>{box.hidden=true;box.innerHTML='';};
+  const foot=`<div class="auth-links"><button type="button" data-auth-close>やめる</button></div>`;
+  const wire=()=>{const b=box.querySelector('[data-auth-close]');if(b)b.addEventListener('click',close);};
+  const after=async()=>{close();await authRefresh();};
+  box.hidden=false;
+  if(!off){const o=new MutationObserver(wire);o.observe(box,{childList:true});totpSetup(box,'',()=>{o.disconnect();after();},foot);return;}
+  box.innerHTML=`<form class="auth-card" autocomplete="off">${AUTH_LOGO}<h1>認証アプリを外す</h1>
+    <label>今のパスワード<input id="tf-off-pw" type="password" required autocomplete="current-password"></label>
+    <label>アプリに出た 6 桁のコード<input id="tf-off-code" required inputmode="numeric" autocomplete="one-time-code" maxlength="7"></label>
+    <button class="btn" type="submit">外す</button><p class="auth-err" role="alert"></p>${foot}</form>`;
+  wire();
+  box.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]'),m=box.querySelector('.auth-err');btn.disabled=true;m.textContent='';
+    try{await api('/api/auth/totp/off',{method:'POST',json:{password:$('#tf-off-pw').value,code:$('#tf-off-code').value}});await after();}catch(er){m.textContent=er.message;btn.disabled=false;}});
 }
 function authForm(s,done){
   const sp=$('#splash'),box=$('#authv');sp.hidden=true;box.hidden=false;
   let last='';try{last=localStorage.getItem('otokura.lastUser')||'';}catch(e){}
-  const finish=a=>{AUTH=a;try{localStorage.setItem('otokura.lastUser',a.user.name);}catch(e){}box.hidden=true;box.innerHTML='';sp.className='splash boot';sp.hidden=false;loaderMsg('');done();};
-  const logo='<div class="auth-logo"><svg viewBox="60 110 392 330" width="72" height="72" aria-hidden="true" fill="#fff"><path d="M108 318 V262 L256 132 L404 262 V318" fill="none" stroke="#fff" stroke-width="32" stroke-linejoin="round" stroke-linecap="round"/><rect x="88" y="290" width="76" height="128" rx="32"/><rect x="348" y="290" width="76" height="128" rx="32"/><rect x="216" y="344" width="18" height="50" rx="9"/><rect x="246" y="304" width="18" height="90" rx="9"/><rect x="276" y="330" width="18" height="64" rx="9"/></svg><b>音蔵</b></div>';
+  let knownPw='';   // 今入れたパスワードは聞き直さない(この画面の間だけ持つ)
+  const again=async()=>{const r=await fetch(API+'/api/auth/state');finish(await r.json());};
+  const second=()=>{
+    const appLink='<button type="button" id="pk-app">認証アプリを使う</button>';
+    if(!passkeyOK()){
+      box.innerHTML=`<form class="auth-card" autocomplete="off">${AUTH_LOGO}<h1>管理者の指紋の登録が必要です</h1>
+        <p>この画面では指紋を登録できません。スマホで https のアドレスを開き、管理者でログインして登録してください。登録が済むと、この画面も使えるようになります。</p>
+        <button class="btn" type="button" id="pk-again">登録したので続ける</button><p class="auth-err" role="alert"></p>
+        <div class="auth-links">${appLink}<button type="button" data-auth-out>ログアウト</button></div></form>`;
+      $('#pk-again').addEventListener('click',again);
+    }else{
+      box.innerHTML=`<form class="auth-card" autocomplete="off">${AUTH_LOGO}<h1>管理者の指紋を登録</h1>
+        <p>管理者は、インターネットからの不正なログインを防ぐため、パスワードだけではログインできません。スマホは指紋、Windows は PIN を使います。指紋は端末の中で確かめられ、音蔵には送られません。</p>
+        ${knownPw?'':'<label>今のパスワード<input id="pk-pw" type="password" required autocomplete="current-password"></label>'}
+        <button class="btn" type="submit" id="pk-reg">指紋を登録</button><p class="auth-err" role="alert"></p>
+        <div class="auth-links">${appLink}<button type="button" data-auth-out>ログアウト</button></div></form>`;
+      box.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();const btn=$('#pk-reg'),m=box.querySelector('.auth-err');btn.disabled=true;m.textContent='';
+        try{await passkeyAdd(knownPw||$('#pk-pw').value);again();}catch(er){m.textContent=passkeyMsg(er);btn.disabled=false;}});
+    }
+    authOut(box);$('#pk-app').addEventListener('click',()=>totpSetup(box,knownPw,again,authFree));
+  };
+  const steps=()=>{
+    if(!AUTH.user.mustChange){second();return;}
+    box.innerHTML=`<form class="auth-card" autocomplete="off">${AUTH_LOGO}<h1>新しいパスワードを決めてください</h1>
+      <p>最初に一度だけ必要です。10 文字以上で、ほかのサービスと同じものは使わないでください。</p>
+      ${knownPw?'':'<label>今のパスワード<input id="fc-cur" type="password" required autocomplete="current-password"></label>'}
+      <label>新しいパスワード<input id="fc-new" type="password" required minlength="10" autocomplete="new-password"></label>
+      <label>新しいパスワード(確認)<input id="fc-new2" type="password" required autocomplete="new-password"></label>
+      <button class="btn" type="submit">変更して始める</button><p class="auth-err" role="alert"></p>${authFree}</form>`;
+    authOut(box);
+    box.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]'),m=box.querySelector('.auth-err'),n=$('#fc-new').value;m.textContent='';
+      if(n!==$('#fc-new2').value){m.textContent='確認の入力が一致しません';return;}
+      btn.disabled=true;
+      try{await api('/api/auth/password',{method:'POST',json:{current:knownPw||$('#fc-cur').value,new:n}});knownPw=n;again();}catch(er){m.textContent=er.message;btn.disabled=false;}});
+  };
+  const finish=a=>{AUTH=a;try{localStorage.setItem('otokura.lastUser',a.user.name);}catch(e){}if(authPending(a.user)){steps();return;}knownPw='';box.hidden=true;box.innerHTML='';sp.className='splash boot';sp.hidden=false;loaderMsg('');done();};
   const send=async(path,json,btn)=>{
     btn.disabled=true;const m=box.querySelector('.auth-err');m.textContent='';
     try{const r=await fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(json)});
-      const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||('HTTP '+r.status));finish(j);}
+      const j=await r.json().catch(()=>({}));
+      if(r.status===401&&r.headers.get('X-Need-Code')&&!json.code){askCode(json);return;}
+      if(r.status===401&&r.headers.get('X-Need-Passkey')&&passkeyOK()){const k=$('#au-passkey');if(k)k.hidden=false;}
+      if(!r.ok)throw new Error(j.detail||('HTTP '+r.status));knownPw=json.password||'';finish(j);}
     catch(e){m.textContent=e.message;btn.disabled=false;}
   };
+  const askCode=json=>{
+    box.innerHTML=`<form class="auth-card" autocomplete="off">${AUTH_LOGO}<h1>認証アプリのコード</h1><p>認証アプリに出ている 6 桁の数字を入れてください。</p>
+      <label>6 桁のコード<input id="au-2fa" required inputmode="numeric" autocomplete="one-time-code" maxlength="7"></label>
+      <button class="btn" type="submit">ログイン</button><p class="auth-err" role="alert"></p>
+      <div class="auth-links"><button type="button" id="au-back">ログインに戻る</button><button type="button" id="au-forgot">スマホをなくした</button></div></form>`;
+    $('#au-back').addEventListener('click',draw);$('#au-forgot').addEventListener('click',forgot);$('#au-2fa').focus();
+    box.querySelector('form').addEventListener('submit',e=>{e.preventDefault();send('/api/auth/login',{...json,code:$('#au-2fa').value},e.target.querySelector('button[type=submit]'));});
+  };
+  if(s.user){steps();return;}
   if(s.needsSetup){
-    box.innerHTML=`<form class="auth-card" autocomplete="off">${logo}<h1>最初の管理者を登録</h1><p>確認コードは NAS の音蔵のデータフォルダの setup-code.txt にあります。</p>
+    box.innerHTML=`<form class="auth-card" autocomplete="off">${AUTH_LOGO}<h1>最初の管理者を登録</h1><p>確認コードは NAS の音蔵のデータフォルダの setup-code.txt にあります。</p>
       <label>確認コード<input id="au-code" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <label>ユーザー名(メールアドレスなど)<input id="au-name" required maxlength="80" autocomplete="username" autocapitalize="off" spellcheck="false"></label>
       <label>パスワード(10 文字以上)<input id="au-pw" type="password" required minlength="10" autocomplete="new-password"></label>
@@ -2942,24 +3083,46 @@ function authForm(s,done){
     return;
   }
   const forgot=()=>{
-    box.innerHTML=`<form class="auth-card" autocomplete="off">${logo}<h1>パスワードを忘れたとき</h1>
+    box.innerHTML=`<form class="auth-card" autocomplete="off">${AUTH_LOGO}<h1>パスワードやスマホをなくしたとき</h1>
       <p><b>家族の方</b>: 管理者に、設定の「アカウント」で再設定してもらってください。</p>
       <p><b>管理者の方</b>: NAS に SSH で入り、次のコマンドで確認コードを作ります(15 分有効)。</p>
       <code class="auth-cmd">docker exec otokura python -m otokura.auth reset-code</code>
       <label>確認コード<input id="au-code" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <label>新しいパスワード(10 文字以上)<input id="au-pw" type="password" required minlength="10" autocomplete="new-password"></label>
+      <p>再設定すると指紋と認証アプリの登録も消えるので、続けて登録し直します。</p>
       <button class="btn" type="submit">再設定してログイン</button><p class="auth-err" role="alert"></p>
       <div class="auth-links"><button type="button" id="au-back">ログインに戻る</button></div></form>`;
     $('#au-back').addEventListener('click',draw);
     box.querySelector('form').addEventListener('submit',e=>{e.preventDefault();send('/api/auth/reset',{code:$('#au-code').value,password:$('#au-pw').value},e.target.querySelector('button[type=submit]'));});
   };
+  // テレビなど: コードを出して待ち、ログイン済みのスマホの承認を受ける
+  const deviceLogin=async()=>{
+    let timer=null,cur=null;const stop=()=>{clearInterval(timer);timer=null;};
+    box.innerHTML=`<div class="auth-card">${AUTH_LOGO}<h1>スマホで承認してログイン</h1>
+      <div class="auth-code" id="dv-show" aria-live="polite">…</div>
+      <p>ログイン済みのスマホの音蔵で、設定 → アカウント →「テレビでログイン」を開き、このコードを入れて承認してください。</p>
+      <p class="auth-err" role="alert"></p><div class="auth-links"><button type="button" id="au-back">ログインに戻る</button></div></div>`;
+    $('#au-back').addEventListener('click',()=>{stop();draw();});$('#au-back').focus();
+    const fresh=async()=>{const r=await fetch(API+'/api/auth/device/start',{method:'POST'}),j=await r.json();if(!r.ok)throw new Error(j.detail||('HTTP '+r.status));cur=j;$('#dv-show').textContent=j.code;};
+    const tick=async()=>{if(!cur)return;
+      const r=await fetch(API+'/api/auth/device/poll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:cur.id})});
+      if(r.status===404){await fresh();return;}
+      const j=await r.json();if(r.ok&&j.status==='ok'){stop();finish(j);}};
+    try{await fresh();timer=setInterval(()=>tick().catch(()=>{}),3000);}catch(e){box.querySelector('.auth-err').textContent=e.message;}
+  };
   const draw=()=>{
-    box.innerHTML=`<form class="auth-card">${logo}
+    box.innerHTML=`<form class="auth-card">${AUTH_LOGO}
       <label>ユーザー名(メールアドレス)<input id="au-name" type="text" inputmode="email" required value="${esc(last)}" autocomplete="username" autocapitalize="off" spellcheck="false"></label>
       <label>パスワード<input id="au-pw" type="password" required autocomplete="current-password"></label>
-      <button class="btn" type="submit">ログイン</button><p class="auth-err" role="alert"></p>
-      <div class="auth-links"><button type="button" id="au-forgot">パスワードを忘れた</button><a href="manual.html" target="_blank" rel="noopener">使い方</a></div></form>`;
-    $('#au-forgot').addEventListener('click',forgot);
+      <button class="btn" type="submit">ログイン</button>
+      <button class="btn" type="button" id="au-passkey" ${passkeyOK()&&passkeyHere()?'':'hidden'}>指紋でログイン</button><p class="auth-err" role="alert"></p>
+      <div class="auth-links"><button type="button" id="au-forgot">パスワードを忘れた</button><button type="button" id="au-device">スマホで承認</button><a href="manual.html" target="_blank" rel="noopener">使い方</a></div></form>`;
+    $('#au-forgot').addEventListener('click',forgot);$('#au-device').addEventListener('click',deviceLogin);
+    $('#au-passkey').addEventListener('click',async e=>{const btn=e.currentTarget,m=box.querySelector('.auth-err');btn.disabled=true;m.textContent='';
+      try{const j=await (await fetch(API+'/api/auth/passkey/login/start',{method:'POST'})).json();
+        const r=await fetch(API+'/api/auth/passkey/login/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({challengeId:j.challengeId,credential:await passkeyAsk(j.options)})});
+        const a=await r.json();if(!r.ok)throw new Error(a.detail||('HTTP '+r.status));passkeyHere(true);finish(a);}
+      catch(er){m.textContent=passkeyMsg(er);btn.disabled=false;}});
     box.querySelector('form').addEventListener('submit',e=>{e.preventDefault();
       send('/api/auth/login',{name:$('#au-name').value.trim(),password:$('#au-pw').value},e.target.querySelector('button[type=submit]'));});
     $(last?'#au-pw':'#au-name').focus();
@@ -2967,18 +3130,21 @@ function authForm(s,done){
   draw();
 }
 function accountPage(){
-  setTimeout(fillUsers,0);
+  setTimeout(fillUsers,0);setTimeout(fillPasskeys,0);
   const u=AUTH.user||{name:'',role:''};
   return {title:'アカウント',back:true,html:`<div class="panel"><div class="prow"><span class="tt"><b>${esc(u.name)}</b><small>${u.role==='admin'?'管理者':'家族'}</small></span><button class="btn ghost sm" data-act="acctLogout">ログアウト</button></div></div>
    <div class="group">パスワードの変更</div><div class="panel"><div class="form"><label>今のパスワード<input id="ac-cur" type="password" autocomplete="current-password"></label><label>新しいパスワード(10 文字以上)<input id="ac-new" type="password" autocomplete="new-password"></label><div class="full"><button class="btn" data-act="acctPw">変更する</button></div></div></div>
+   ${LIVE?`<div class="group">指紋・PIN でログイン</div><div class="panel"><div id="pklist"></div><div class="prow" style="flex-wrap:wrap;gap:8px"><span class="tt" style="min-width:160px"><small>スマホは指紋、Windows は PIN でログインできます。端末ごとに登録します。${u.role==='admin'?'管理者は、指紋か認証アプリが必須です。':'使わなくてもかまいません。'}${passkeyOK()?'':' この画面では登録できません。https のアドレスで開いてください。'}</small></span>${passkeyOK()?'<button class="btn ghost sm" data-act="passkeyAdd">この端末を登録</button>':''}</div></div>
+   <div class="group">テレビでログイン</div><div class="panel"><div class="form"><label>テレビに出たコード<input id="dv-code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="9" placeholder="ABCD-2345"></label><div class="full"><button class="btn" data-act="deviceApprove">承認する</button></div></div></div>
+   <div class="group">認証アプリ(予備)</div><div class="panel"><div class="prow" style="flex-wrap:wrap;gap:8px"><span class="tt" style="min-width:160px"><b style="font-weight:500">6 桁のコード</b><small>${u.totp?'設定済み。指紋が使えない端末で、パスワードとコードでログインできます':'指紋が使えない端末でログインしたいときだけ設定します'}</small></span>${u.totp?'<button class="btn ghost sm" data-act="totpOff">外す</button>':'<button class="btn ghost sm" data-act="totpOn">設定する</button>'}</div></div>`:''}
    ${isAdmin()?`<div class="group">アカウントの一覧</div><div class="panel" id="acctlist"></div>
    <div class="group">アカウントを追加</div><div class="panel"><div class="form"><label>ユーザー名(メールアドレス)<input id="ac-name" maxlength="80" autocomplete="off" autocapitalize="off" spellcheck="false"></label><label>パスワード(10 文字以上)<input id="ac-pass" type="password" autocomplete="new-password"></label><div class="full"><button class="btn" data-act="userAdd">${ico('add',20)}追加する</button></div></div></div>
-   <p class="muted" style="font-size:13px;margin:10px 4px">家族は曲を聴く・ダウンロードする・自分のプレイリストを作ることができます。タグの編集やスキャン、NAS のファイルには触れません。再生回数やお気に入りは人ごとに別です。</p>`:''}`};
+   <p class="muted" style="font-size:13px;margin:10px 4px">家族は最初のログインで、自分のパスワードに変えます。曲を聴く・ダウンロードする・自分のプレイリストを作ることができます。タグの編集やスキャン、NAS のファイルには触れません。再生回数やお気に入りは人ごとに別です。</p>`:''}`};
 }
 async function fillUsers(){
   const box=$('#acctlist');if(!box)return;
   try{const l=await api('/api/users');
-    box.innerHTML=l.map(u=>`<div class="prow" style="flex-wrap:wrap;gap:8px"><span class="tt" style="min-width:120px"><b style="font-weight:500">${esc(u.name)}</b><small>${u.role==='admin'?'管理者':'家族'}</small></span><button class="btn ghost sm" data-act="userPw" data-id="${u.id}" data-n="${esc(u.name)}">パスワードを再設定</button>${u.id===AUTH.user.id?'':`<button class="btn ghost sm" data-act="userDel" data-id="${u.id}" data-n="${esc(u.name)}">削除</button>`}</div>`).join('');
+    box.innerHTML=l.map(u=>`<div class="prow" style="flex-wrap:wrap;gap:8px"><span class="tt" style="min-width:120px"><b style="font-weight:500">${esc(u.name)}</b><small>${u.role==='admin'?'管理者':'家族'}</small></span>${u.id===AUTH.user.id?'':`<button class="btn ghost sm" data-act="userPw" data-id="${u.id}" data-n="${esc(u.name)}">パスワードを再設定</button>`}${u.id===AUTH.user.id?'':`<button class="btn ghost sm" data-act="userDel" data-id="${u.id}" data-n="${esc(u.name)}">削除</button>`}</div>`).join('');
   }catch(e){box.innerHTML=`<div class="prow"><span class="tt"><small>${esc(e.message)}</small></span></div>`;}
 }
 /* --- ダウンロード。元のファイルか、選んだ形式に変換したもの(タグとカバーも入る) --- */

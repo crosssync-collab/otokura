@@ -40,9 +40,11 @@ docker compose logs -f  # 「スキャン完了」が出れば準備完了
 
 ブラウザで `http://<NAS のアドレス>:8686/` を開きます。最初に管理者を登録します。確認コードはデータフォルダの `setup-code.txt` にあります(`cat data/setup-code.txt`)。家族のアカウントは設定の「アカウント」で作ります。家族向けの初期設定と使い方は `/manual.html`(設定の「使い方」、ログイン画面からも開けます)。
 
-遠方の家族は Tailscale のノード共有でつなぎます(`sudo tailscale serve --bg --https=8443 8686` で配り、管理画面で NAS を共有。共有相手は 8443 だけに制限する)。インターネットへ公開するなら Tailscale Funnel も使えます(`sudo tailscale funnel --bg --https=8443 8686`、止めるときは `sudo tailscale funnel --https=8443 off`)。
+外から使うときは Tailscale Funnel で公開できます(`sudo tailscale funnel --bg --https=8443 8686`)。止めるときは `sudo tailscale funnel --https=8443 off`。
 
-パスワードを忘れたとき: 家族の分は管理者が設定の「アカウント」で再設定します。管理者の分は、NAS で `docker exec otokura python -m otokura.auth reset-code` を実行して確認コードを作り(15 分有効)、ログイン画面の「パスワードを忘れた」に入れます。スマホのホーム画面に追加してアプリとして使うには HTTPS が要るので、Tailscale を使うなら NAS で `sudo tailscale serve --bg --https=8443 8686` を実行し、`https://<NAS の名前>.<tailnet>.ts.net:8443/` を開きます。初回は全曲のタグを読むので、1 万曲で数分かかります。2 回目からは変わったファイルだけを読みます(毎日 03:00 と、設定 → メディアプロバイダ →「今すぐスキャン」)。
+ログイン: 管理者はパスワードだけでは入れません。最初に指紋・PIN(パスキー)を登録します(`https` のアドレスで開いたときに使えます)。登録できない端末には予備として認証アプリ(Google Authenticator など)を使えます。家族はどちらも任意で、管理者が作ったパスワードを最初のログインで本人が変えます。テレビはログイン画面の「スマホで承認」で、スマホの指紋で承認してログインします。
+
+パスワードを忘れたとき: 家族の分は管理者が設定の「アカウント」で再設定します。管理者の分は(指紋を登録したスマホをなくしたときも)、NAS で `docker exec otokura python -m otokura.auth reset-code` を実行して確認コードを作り(15 分有効)、ログイン画面の「パスワードを忘れた」に入れます。スマホのホーム画面に追加してアプリとして使うには HTTPS が要るので、Tailscale を使うなら NAS で `sudo tailscale serve --bg --https=8443 8686` を実行し、`https://<NAS の名前>.<tailnet>.ts.net:8443/` を開きます。初回は全曲のタグを読むので、1 万曲で数分かかります。2 回目からは変わったファイルだけを読みます(毎日 03:00 と、設定 → メディアプロバイダ →「今すぐスキャン」)。
 
 更新するとき:
 

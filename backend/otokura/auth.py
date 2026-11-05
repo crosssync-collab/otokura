@@ -6,6 +6,9 @@
 - Cast・DLNA の機器はログインできないので、曲ごと・期限付きの署名を URL に付ける
 - 管理者がパスワードを忘れたら、NAS で `docker exec otokura python -m otokura.auth reset-code` を実行して確認コードを作り、
   ログイン画面で再設定する。NAS に入れる人だけができる。家族のパスワードは管理者が画面で再設定する
+- 管理者が作ったパスワードは本人が最初のログインで変える(must_change)。それまで API は使えない
+- 管理者は指紋・PIN(パスキー、passkey.py)か認証アプリの 6 桁のコード(TOTP、RFC 6238)が必須で、パスワードだけでは入れない。家族は任意
+- スマホをなくしたら、管理者は上の確認コードで、家族は管理者の再設定で、登録が消える
 """
 from __future__ import annotations
 
@@ -17,12 +20,17 @@ import logging
 import os
 import re
 import secrets
+import struct
 import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import quote
 
+import segno
 from fastapi import HTTPException, Request, Response
+
+from .passkey import Passkeys
 
 log = logging.getLogger("otokura.auth")
 
@@ -35,6 +43,8 @@ MAX_NAME_FAILS = 20    # 同じ名前(接続元を変えながらの攻撃)
 MAX_IP_FAILS = 20      # 同じ接続元(名前を変えながらの攻撃)
 SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}
 RESET_S = 15 * 60
+TOTP_STEP = 30
+TOTP_ISSUER = "Otokura"
 _TAILNET = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 
 # 家族に許す書き込み。ここに無いものは管理者だけ
@@ -65,6 +75,22 @@ def check_password(password: str, stored: str) -> bool:
 
 
 _DUMMY = hash_password("otokura")     # いない名前でも同じ時間をかける
+
+
+def totp_code(secret: str, step: int) -> str:
+    d = hmac.new(base64.b32decode(secret), struct.pack(">Q", step), hashlib.sha1).digest()
+    o = d[-1] & 15
+    return f"{(struct.unpack('>I', d[o:o + 4])[0] & 0x7fffffff) % 1000000:06d}"
+
+
+def totp_match(secret: str, code: str, after: int = 0) -> int | None:
+    """合っていれば時間の番号を返す。時計のずれを前後 1 つ分だけ許し、使ったコード(after 以前)は受けない。"""
+    code = re.sub(r"\s", "", str(code or ""))
+    now = int(time.time()) // TOTP_STEP
+    for step in (now - 1, now, now + 1):
+        if step > after and hmac.compare_digest(totp_code(secret, step), code):
+            return step
+    return None
 
 
 def is_home(request: Request) -> bool:
@@ -98,6 +124,7 @@ class Auth:
         self._fails: dict[tuple[str, str], tuple[int, float]] = {}
         self._lock = threading.Lock()
         self._hashing = threading.BoundedSemaphore(2)    # パスワードの照合は重いので同時に 2 つまで(大量の試行で NAS を止めない)
+        self.passkeys = Passkeys(self)
         if enabled and not self.has_users():
             self._ensure_setup_code()
 
@@ -148,7 +175,10 @@ class Auth:
         if not real or not hmac.compare_digest(real.encode(), str(code).strip().encode()):
             self._failed(key)
             raise HTTPException(403, "確認コードが違うか、期限(15 分)が切れています")
-        self.set_password(row["id"], password)    # 短いパスワードならここで止まり、コードは使い切らない
+        name = self.db.one("SELECT name FROM users WHERE id=?", (row["id"],))["name"]
+        self._not_weak(name, password)            # 短いパスワードならここで止まり、コードは使い切らない
+        self.set_password(row["id"], password)
+        self._clear_second(row["id"])             # スマホをなくしたときの出口。次の画面で登録し直す
         path.unlink(missing_ok=True)
         with self._lock:
             self._fails.pop(key, None)
@@ -164,13 +194,23 @@ class Auth:
             raise HTTPException(422, f"パスワードは {MIN_PASSWORD} 文字以上にしてください")
         return name
 
+    @staticmethod
+    def _not_weak(name: str, password: str) -> None:
+        """本人が決めるパスワードの条件。管理者が作る最初のパスワードには使わない。"""
+        if len(str(password or "")) < MIN_PASSWORD:
+            raise HTTPException(422, f"パスワードは {MIN_PASSWORD} 文字以上にしてください")
+        if str(password).strip().casefold() == str(name).strip().casefold():
+            raise HTTPException(422, "パスワードはユーザー名と違うものにしてください")
+
     def create_user(self, name: str, password: str, role: str = "member", uid: int | None = None) -> int:
         name = self._check(name, password)
+        if role == "admin":
+            self._not_weak(name, password)
         with self.db.write_lock:
             if self.db.one("SELECT 1 FROM users WHERE name=? COLLATE NOCASE", (name,)):
                 raise HTTPException(409, "同じユーザー名のアカウントがあります")
-            cur = self.db.conn.execute("INSERT INTO users(id,name,pw_hash,role,created_at) VALUES(?,?,?,?,?)",
-                                       (uid, name, hash_password(password), role, time.time()))
+            cur = self.db.conn.execute("INSERT INTO users(id,name,pw_hash,role,created_at,must_change) VALUES(?,?,?,?,?,?)",
+                                       (uid, name, hash_password(password), role, time.time(), int(role != "admin")))
             self.db.conn.commit()
         return cur.lastrowid
 
@@ -178,15 +218,105 @@ class Auth:
         if len(str(password or "")) < MIN_PASSWORD:
             raise HTTPException(422, f"パスワードは {MIN_PASSWORD} 文字以上にしてください")
         with self.db.write_lock:
-            self.db.conn.execute("UPDATE users SET pw_hash=? WHERE id=?", (hash_password(password), uid))
-            self.db.conn.execute("DELETE FROM sessions WHERE user_id=? AND token_hash<>?",
-                                 (uid, self._token_hash(keep_session) if keep_session else ""))
+            self.db.conn.execute("UPDATE users SET pw_hash=?,must_change=0 WHERE id=?", (hash_password(password), uid))
+            self._drop_sessions(uid, keep_session)
             self.db.conn.commit()
+
+    def reset_member(self, uid: int, password: str) -> None:
+        """管理者による再設定。本人は次のログインで変える。認証アプリをなくした人もここで救う。"""
+        self.set_password(uid, password)
+        self._clear_second(uid)
+        with self.db.write_lock:
+            self.db.conn.execute("UPDATE users SET must_change=1 WHERE id=?", (uid,))
+            self.db.conn.commit()
+
+    def change_password(self, user: dict, current: str, new: str, keep_session: str | None) -> None:
+        self._confirm_self(user["id"], current)
+        self._not_weak(user["name"], new)
+        if str(new) == str(current):
+            raise HTTPException(422, "今と違うパスワードにしてください")
+        self.set_password(user["id"], new, keep_session=keep_session)
+
+    def _drop_sessions(self, uid: int, keep_session: str | None) -> None:
+        self.db.conn.execute("DELETE FROM sessions WHERE user_id=? AND token_hash<>?",
+                             (uid, self._token_hash(keep_session) if keep_session else ""))
+
+    def _confirm_self(self, uid: int, password: str) -> None:
+        """ログイン中の人の本人確認。続けて間違えたら待たせる。"""
+        key = ("#self", str(uid))
+        wait = self._throttled(key)
+        if wait:
+            raise HTTPException(429, f"続けて間違えたので、{int(wait) + 1} 秒待ってください")
+        if not check_password(str(password or ""), self.db.one("SELECT pw_hash FROM users WHERE id=?", (uid,))["pw_hash"]):
+            self._failed(key)
+            raise HTTPException(403, "今のパスワードが違います")
+        with self._lock:
+            self._fails.pop(key, None)
+
+    # ---------- 二重認証 ----------
+    def _clear_totp(self, uid: int) -> None:
+        with self.db.write_lock:
+            self.db.conn.execute("UPDATE users SET totp_secret=NULL,totp_pending=NULL,totp_last=0 WHERE id=?", (uid,))
+            self.db.conn.commit()
+
+    def _clear_second(self, uid: int) -> None:
+        self._clear_totp(uid)
+        self.passkeys.clear(uid)
+
+    def check_code(self, uid: int, code: str) -> None:
+        row = self.db.one("SELECT totp_secret,totp_last FROM users WHERE id=?", (uid,))
+        step = self._code_step(uid, row["totp_secret"], code, row["totp_last"])
+        with self.db.write_lock:
+            self.db.conn.execute("UPDATE users SET totp_last=? WHERE id=?", (step, uid))
+            self.db.conn.commit()
+
+    def totp_start(self, user: dict, password: str) -> dict:
+        self._confirm_self(user["id"], password)
+        if self.db.one("SELECT totp_secret FROM users WHERE id=?", (user["id"],))["totp_secret"]:
+            raise HTTPException(409, "二重認証はすでに設定されています")
+        secret = base64.b32encode(os.urandom(20)).decode()
+        with self.db.write_lock:
+            self.db.conn.execute("UPDATE users SET totp_pending=? WHERE id=?", (secret, user["id"]))
+            self.db.conn.commit()
+        uri = f"otpauth://totp/{TOTP_ISSUER}:{quote(user['name'])}?secret={secret}&issuer={TOTP_ISSUER}"
+        return {"secret": secret, "uri": uri, "qr": segno.make(uri, error="m").svg_inline(scale=5, border=4)}
+
+    def totp_confirm(self, user: dict, code: str, keep_session: str | None) -> None:
+        row = self.db.one("SELECT totp_pending FROM users WHERE id=?", (user["id"],))
+        if not row["totp_pending"]:
+            raise HTTPException(409, "先に二重認証の設定を始めてください")
+        step = self._code_step(user["id"], row["totp_pending"], code, 0)
+        with self.db.write_lock:
+            self.db.conn.execute("UPDATE users SET totp_secret=totp_pending,totp_pending=NULL,totp_last=? WHERE id=?", (step, user["id"]))
+            self._drop_sessions(user["id"], keep_session)    # 二重認証の前からログインしていた端末は入り直す
+            self.db.conn.commit()
+
+    def totp_off(self, user: dict, password: str, code: str) -> None:
+        self._confirm_self(user["id"], password)
+        row = self.db.one("SELECT totp_secret,totp_last FROM users WHERE id=?", (user["id"],))
+        if not row["totp_secret"]:
+            raise HTTPException(409, "二重認証は設定されていません")
+        self._code_step(user["id"], row["totp_secret"], code, row["totp_last"])
+        self._clear_totp(user["id"])
+
+    def _code_step(self, uid: int, secret: str, code: str, after: int) -> int:
+        key = ("#code", str(uid))
+        wait = self._throttled(key)
+        if wait:
+            raise HTTPException(429, f"続けて間違えたので、{int(wait) + 1} 秒待ってください")
+        step = totp_match(secret, code, after)
+        if step is None:
+            self._failed(key)
+            raise HTTPException(403, "コードが違います。認証アプリの今の数字を入れてください")
+        with self._lock:
+            self._fails.pop(key, None)
+        return step
 
     def delete_user(self, uid: int) -> None:
         with self.db.write_lock:
             c = self.db.conn
             c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+            c.execute("DELETE FROM passkeys WHERE user_id=?", (uid,))
             c.execute("DELETE FROM track_stats WHERE user_id=?", (uid,))
             c.execute("DELETE FROM user_settings WHERE user_id=?", (uid,))
             c.execute("DELETE FROM lyrics_personal WHERE user_id=?", (uid,))
@@ -213,7 +343,7 @@ class Auth:
                 now = time.time()
                 self._fails = {k: v for k, v in self._fails.items() if v[1] > now}
 
-    def login(self, request: Request, response: Response, name: str, password: str) -> dict:
+    def login(self, request: Request, response: Response, name: str, password: str, code: str = "") -> dict:
         name = str(name or "").strip()
         ip = request.client.host if request.client else ""
         key, by_name, by_ip = (name.casefold(), ip), (name.casefold(), "*"), ("*", ip)
@@ -232,6 +362,20 @@ class Auth:
             self._failed(by_name, MAX_NAME_FAILS)
             self._failed(by_ip, MAX_IP_FAILS)
             raise HTTPException(401, "ユーザー名かパスワードが違います")
+        if row["totp_secret"]:
+            if not str(code or "").strip():
+                raise HTTPException(401, "認証アプリの 6 桁のコードを入れてください", headers={"X-Need-Code": "1"})
+            step = totp_match(row["totp_secret"], code, row["totp_last"])
+            if step is None:
+                self._failed(key)
+                self._failed(by_name, MAX_NAME_FAILS)
+                self._failed(by_ip, MAX_IP_FAILS)
+                raise HTTPException(401, "コードが違います。認証アプリの今の数字を入れてください", headers={"X-Need-Code": "1"})
+            with self.db.write_lock:
+                self.db.conn.execute("UPDATE users SET totp_last=? WHERE id=?", (step, row["id"]))
+                self.db.conn.commit()
+        elif row["role"] == "admin" and self.passkeys.count(row["id"]):
+            raise HTTPException(401, "管理者は指紋でログインしてください", headers={"X-Need-Passkey": "1"})
         with self._lock:
             for k in (key, by_name, by_ip):
                 self._fails.pop(k, None)
@@ -267,9 +411,10 @@ class Auth:
                           (self._token_hash(token), time.time()))
         return self.public(row) if row else None
 
-    @staticmethod
-    def public(row) -> dict:
-        return {"id": row["id"], "name": row["name"], "role": row["role"]}
+    def public(self, row) -> dict:
+        keys = self.passkeys.count(row["id"])
+        return {"id": row["id"], "name": row["name"], "role": row["role"], "mustChange": bool(row["must_change"]), "totp": bool(row["totp_secret"]),
+                "passkeys": keys, "needsSecond": row["role"] == "admin" and not row["totp_secret"] and not keys}
 
     # ---------- Cast・DLNA の機器に渡す署名 ----------
     def _secret(self) -> bytes:
@@ -314,6 +459,10 @@ class Auth:
         if user is None:
             raise HTTPException(401, "ログインしてください")
         request.state.user = user
+        if user.get("mustChange"):
+            raise HTTPException(403, "先にパスワードを変更してください")
+        if user.get("needsSecond"):
+            raise HTTPException(403, "先に指紋を登録してください")
         if user["role"] == "admin":
             return
         if path.startswith("/api/dlna/") and not is_home(request):

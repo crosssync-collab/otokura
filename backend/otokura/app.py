@@ -17,7 +17,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from . import __version__, art, metadata
-from .auth import Auth, is_home
+from .auth import COOKIE, Auth, is_home
 from .config import Config, from_env
 from .db import Database
 from .dlna import Dlna, DlnaError, didl
@@ -120,7 +120,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
 
     @app.post("/api/auth/login")
     def auth_login(request: Request, response: Response, body: dict = Body(...)):
-        return auth_state(request, auth.login(request, response, body.get("name", ""), body.get("password", "")))
+        return auth_state(request, auth.login(request, response, body.get("name", ""), body.get("password", ""), body.get("code", "")))
 
     @app.post("/api/auth/reset")
     def auth_reset(request: Request, response: Response, body: dict = Body(...)):
@@ -133,16 +133,78 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         auth.logout(request, response)
         return {"ok": True}
 
-    @app.post("/api/auth/password")
-    def auth_password(request: Request, body: dict = Body(...)):
+    def signed_in(request: Request) -> dict:
         user = auth.user_of(request)
         if not user:
             raise HTTPException(401, "ログインしてください")
-        row = db.one("SELECT pw_hash FROM users WHERE id=?", (user["id"],))
-        from .auth import COOKIE, check_password
-        if not check_password(str(body.get("current") or ""), row["pw_hash"]):
-            raise HTTPException(403, "今のパスワードが違います")
-        auth.set_password(user["id"], body.get("new", ""), keep_session=request.cookies.get(COOKIE))
+        return user
+
+    @app.post("/api/auth/password")
+    def auth_password(request: Request, body: dict = Body(...)):
+        auth.change_password(signed_in(request), body.get("current"), body.get("new", ""), request.cookies.get(COOKIE))
+        return {"ok": True}
+
+    @app.post("/api/auth/totp/start")
+    def auth_totp_start(request: Request, body: dict = Body(...)):
+        return auth.totp_start(signed_in(request), body.get("password"))
+
+    @app.post("/api/auth/totp/confirm")
+    def auth_totp_confirm(request: Request, body: dict = Body(...)):
+        auth.totp_confirm(signed_in(request), body.get("code"), request.cookies.get(COOKIE))
+        return {"ok": True}
+
+    @app.post("/api/auth/totp/off")
+    def auth_totp_off(request: Request, body: dict = Body(...)):
+        auth.totp_off(signed_in(request), body.get("password"), body.get("code"))
+        return {"ok": True}
+
+    @app.get("/api/auth/passkeys")
+    def auth_passkeys(request: Request):
+        return auth.passkeys.list(signed_in(request)["id"])
+
+    @app.post("/api/auth/passkey/register/start")
+    def auth_passkey_reg_start(request: Request, body: dict = Body(...)):
+        return auth.passkeys.register_start(request, signed_in(request), body.get("password"))
+
+    @app.post("/api/auth/passkey/register/finish")
+    def auth_passkey_reg_finish(request: Request, body: dict = Body(...)):
+        auth.passkeys.register_finish(request, signed_in(request), body.get("challengeId"), body.get("credential"))
+        return {"ok": True}
+
+    @app.post("/api/auth/passkey/remove")
+    def auth_passkey_remove(request: Request, body: dict = Body(...)):
+        auth.passkeys.remove(signed_in(request), body.get("id"), body.get("password"))
+        return {"ok": True}
+
+    @app.post("/api/auth/passkey/login/start")
+    def auth_passkey_login_start(request: Request):
+        return auth.passkeys.login_start(request)
+
+    @app.post("/api/auth/passkey/login/finish")
+    def auth_passkey_login_finish(request: Request, response: Response, body: dict = Body(...)):
+        uid = auth.passkeys.login_finish(request, body.get("challengeId"), body.get("credential"))
+        auth.start_session(request, response, uid)
+        return auth_state(request, auth.public(db.one("SELECT * FROM users WHERE id=?", (uid,))))
+
+    @app.post("/api/auth/passkey/confirm/start")
+    def auth_passkey_confirm_start(request: Request):
+        return auth.passkeys.confirm_start(request, signed_in(request))
+
+    @app.post("/api/auth/device/start")
+    def auth_device_start(request: Request):
+        return auth.passkeys.device_start(request)
+
+    @app.post("/api/auth/device/poll")
+    def auth_device_poll(request: Request, response: Response, body: dict = Body(...)):
+        uid = auth.passkeys.device_poll(body.get("id"))
+        if uid is None:
+            return {"status": "wait"}
+        auth.start_session(request, response, uid)
+        return {"status": "ok", **auth_state(request, auth.public(db.one("SELECT * FROM users WHERE id=?", (uid,))))}
+
+    @app.post("/api/auth/device/approve")
+    def auth_device_approve(request: Request, body: dict = Body(...)):
+        auth.passkeys.device_approve(signed_in(request), body)
         return {"ok": True}
 
     @app.get("/api/users")
@@ -155,10 +217,12 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         return {"id": uid}
 
     @app.put("/api/users/{uid}/password")
-    def users_password(uid: int, body: dict = Body(...)):
+    def users_password(uid: int, request: Request, body: dict = Body(...)):
         if not db.one("SELECT 1 FROM users WHERE id=?", (uid,)):
             raise HTTPException(404, "アカウントが見つかりません")
-        auth.set_password(uid, body.get("password", ""))
+        if uid == uid_of(request):
+            raise HTTPException(409, "自分のパスワードは「パスワードの変更」で変えてください")
+        auth.reset_member(uid, body.get("password", ""))
         return {"ok": True}
 
     @app.delete("/api/users/{uid}")
