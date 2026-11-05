@@ -975,7 +975,7 @@ const SETS={
 SETS.web={title:'Web の情報',icon:'info',desc:'アーティスト画像、アルバム情報',items:[
     ['sw','webinfo','ページを開いたときに Web から取る','アーティスト名とアルバム名を MusicBrainz・Wikipedia・Deezer・iTunes に問い合わせます。音楽ファイルは書き換えません']]};
 const SET_LIST=[
-  ['メディア',[['providers','dns','メディアプロバイダ','音楽の置き場所とスキャン'],['outputs','cast','再生先','Chromecast、Google スピーカー、DLNA/UPnP'],['formats','wave','形式と変換','APE、TTA などの扱い'],['web','info','Web の情報','アーティスト画像、アルバム情報、更新の確認']]],
+  ['メディア',[['providers','dns','メディアプロバイダ','音楽の置き場所とスキャン'],['local','folder','この端末の曲','スマホやパソコンの中の曲を聴く'],['outputs','cast','再生先','Chromecast、Google スピーカー、DLNA/UPnP'],['formats','wave','形式と変換','APE、TTA などの扱い'],['web','info','Web の情報','アーティスト画像、アルバム情報、更新の確認']]],
   ['インターフェース',[['theme',...['brush','テーマと配色','配色、カバーアートへの追従']],['home','home','ホーム','ショートカットと表示するセクション'],['np','play','再生中画面','背景、シークバー、評価バー'],['lyrics','lyrics','歌詞','文字の大きさ、ぼかし、取得']]],
   ['再生とミックス',[['mix','mix','ミックス','ミックスの長さと選び方'],['play','vol','再生','音量調整、曲間のつなぎ、キャッシュ'],['effects','tune','エフェクト','イコライザー、空間、真空管、ビジュアライザー']]],
   ['サーバー',[['server','dns','サーバー情報','NAS の状態、バージョン']]],
@@ -993,10 +993,11 @@ function genericSettings(key){
 }
 function pageSettings(sub){
   if(!sub){
-    return SET_LIST.map(([g,items])=>[g,items.filter(i=>isAdmin()&&(LIVE||i[0]!=='account')||LIVE&&!ADMIN_PAGES.includes(i[0]))]).filter(x=>x[1].length).map(([g,items])=>`<div class="group">${g}</div><div class="panel">${items.map(([k,i,t,d])=>`<a class="prow" href="${href('settings/'+k)}"><span class="lead">${ico(i,24)}</span><span class="tt"><b>${t}</b><small>${d}</small></span>${ico('chev',20)}</a>`).join('')}</div>`).join('');
+    return SET_LIST.map(([g,items])=>[g,items.filter(i=>isAdmin()&&(LIVE||!['account','local'].includes(i[0]))||LIVE&&!ADMIN_PAGES.includes(i[0]))]).filter(x=>x[1].length).map(([g,items])=>`<div class="group">${g}</div><div class="panel">${items.map(([k,i,t,d])=>`<a class="prow" href="${href('settings/'+k)}"><span class="lead">${ico(i,24)}</span><span class="tt"><b>${t}</b><small>${d}</small></span>${ico('chev',20)}</a>`).join('')}</div>`).join('');
   }
   if(LIVE&&!isAdmin()&&ADMIN_PAGES.includes(sub))return {title:'設定',back:true,html:'<div class="empty"><b>管理者だけが開けるページです</b></div>'};
   if(LIVE&&sub==='account')return accountPage();
+  if(LIVE&&sub==='local')return {title:'この端末の曲',back:true,html:localProvidersHtml()};
   if(sub==='help')return {title:'使い方',back:true,html:`<div class="panel"><a class="prow" href="manual.html" target="_blank" rel="noopener"><span class="lead">${ico('info',24)}</span><span class="tt"><b>マニュアルを開く</b><small>初期設定とアプリの使い方(新しいタブで開きます)</small></span>${ico('chev',20)}</a></div>`};
   if(SETS[sub])return {title:SETS[sub].title,back:true,html:genericSettings(sub)+(LIVE?liveExtra(sub):'')};
   if(sub==='effects')return {title:'エフェクト',back:true,html:LIVE?`<div class="fxbody">${fxBody()}</div>`:'<div class="empty"><b>サーバーから開いたときに使えます</b></div>'};
@@ -2807,10 +2808,10 @@ function localSrc(s){
 async function localFile(s,ask=true){
   const src=LSRC.find(x=>x.id===s.src);if(!src)throw new Error('この曲の置き場所が見つかりません');
   if(src.kind==='copy'){const r=await LDB.get('files',s.lid);if(!r)throw new Error('取り込んだファイルが見つかりません');return r.blob;}
-  if(!await localPermOk(src,ask))throw Object.assign(new Error(`「${src.name}」を読む許可がありません。設定のメディアプロバイダで許可してください`),{denied:true});
+  if(!await localPermOk(src,ask))throw Object.assign(new Error(`「${src.name}」を読む許可がありません。設定の「この端末の曲」で許可してください`),{denied:true});
   let h=src.handle;const parts=s.rel.split('/');
   try{for(const p of parts.slice(0,-1))h=await h.getDirectoryHandle(p);return await (await h.getFileHandle(parts[parts.length-1])).getFile();}
-  catch(e){if(e.name==='NotAllowedError'){localPerm[src.id]=false;throw Object.assign(new Error(`「${src.name}」を読む許可がありません。設定のメディアプロバイダで許可してください`),{denied:true});}throw new Error('ファイルが見つかりません。メディアプロバイダで読み直してください');}
+  catch(e){if(e.name==='NotAllowedError'){localPerm[src.id]=false;throw Object.assign(new Error(`「${src.name}」を読む許可がありません。設定の「この端末の曲」で許可してください`),{denied:true});}throw new Error('ファイルが見つかりません。設定の「この端末の曲」で読み直してください');}
 }
 const localOffsets=(()=>{try{return JSON.parse(localStorage.getItem('otokura.localOffsets')||'{}');}catch(e){return {};}})();
 // この端末の曲の歌詞: タグの歌詞に、読み込んだ・記録した歌詞(手動登録)をこの端末のブラウザに保存して重ねる。前の版を 1 つ残す
@@ -2831,7 +2832,7 @@ function localProvidersHtml(){
       <small>${x.kind==='dir'?'この端末のフォルダ(そのまま読む)':'この端末に取り込んだ曲'} ・ ${cnt(x.id).toLocaleString()} 曲</small></span>
       ${x.kind==='dir'?`<button class="btn ghost sm" data-act="localRescan" data-id="${x.id}">${localPerm[x.id]?'読み直す':'許可して読み直す'}</button>`:''}
       <button class="ib sm" data-act="localRemove" data-id="${x.id}" aria-label="外す">${ico('close',20)}</button></div>`).join('');
-  return `<div class="group">この端末の曲</div><div class="panel">${rows||'<div class="prow"><span class="tt"><small>まだありません</small></span></div>'}
+  return `<div class="panel">${rows||'<div class="prow"><span class="tt"><small>まだありません</small></span></div>'}
     <div class="prow" style="flex-wrap:wrap;gap:8px">
       ${localCanDir()?`<button class="btn sm" data-act="localAddDir">${ico('folder',18)}フォルダを追加</button>`:''}
       <button class="btn ${localCanDir()?'ghost':''} sm" data-act="localImport">${ico('add',18)}曲を取り込む</button>
@@ -2872,8 +2873,7 @@ function livePage(sub){
     <div class="prow" style="flex-wrap:wrap"><span class="tt" style="min-width:200px"><div class="bar6" aria-hidden="true"><i class="scanbar"></i></div><small class="scanlabel" style="margin-top:6px"></small></span>
       <button class="btn sm" data-act="scan">${ico('refresh',18)}今すぐスキャン</button><button class="btn ghost sm" data-act="scanFull" title="変わっていないファイルもタグを読み直します">すべて読み直す</button></div></div>
     ${S.scan.errorCount?`<div class="group">読めなかったファイル(${S.scan.errorCount})</div><div class="panel">${S.scan.errors.map(e=>`<div class="prow"><span class="tt"><small>${esc(e)}</small></span></div>`).join('')}</div>`:''}
-    <p class="muted" style="font-size:13px;margin:14px 4px">NAS のフォルダの追加や変更は、NAS の docker-compose.yml にある <code>OTOKURA_SOURCES</code> とボリュームで行います。</p>
-    ${localProvidersHtml()}`};
+    <p class="muted" style="font-size:13px;margin:14px 4px">NAS のフォルダの追加や変更は、NAS の docker-compose.yml にある <code>OTOKURA_SOURCES</code> とボリュームで行います。</p>`};
   if(sub==='outputs')return {title:'再生先',back:true,html:outListLive()};
   if(sub==='formats')return {title:'形式と変換',back:true,html:`<div class="panel">${S.codecs.map(c=>`<div class="prow"><span class="tt"><b>${esc(c.codec)}</b><small>${c.tracks.toLocaleString()} 曲</small></span><span class="chip ${c.playable?'ok':''}">${c.transcode?`${c.transcode} に変換して配信`:c.playable?'そのまま再生':S.ffmpeg===false?'再生できません(ffmpeg がありません)':'再生できません'}</span></div>`).join('')||'<div class="prow"><span class="tt">まだ曲がありません</span></div>'}</div>`};
   return {title:'サーバー情報',back:true,html:`<div class="panel">${[['アプリのバージョン',S.version],['Python',S.python],['待ち受け',location.origin],['データフォルダ',S.dataDir+'(データベース、カバーの縮小画像)'],['歌詞の外部取得',S.lrclib?'LRCLIB(歌詞が無い曲だけ)':'使わない'],['前回のスキャン',ago(S.lastScan)]].map(r=>`<div class="prow"><span class="tt"><b>${r[0]}</b><small>${esc(r[1])}</small></span></div>`).join('')}</div>`};
