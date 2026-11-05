@@ -178,3 +178,4 @@ OTOKURA_SOURCES=Lossless=/music/Lossless,1.Lossy=/music/1.Lossy
 - 画面は 1.5 秒ごとに状態を読む。止まったとき、最後に見た位置が曲の終わりの 6 秒以内なら次の曲へ、それ以外は機器側で止めたものとして止まる
 - キューは画面が持つ(Cast と同じ)ので、次の曲へ進むのは画面を開いている間
 - 家の中のアドレス以外には接続しない。説明ファイルの controlURL が別のホストを指す機器も使わない
+- カバーは `upnp:albumArtURI`(`dlna:profileID="JPEG_SM"`)で渡す。多くの機器は progressive の JPEG を読めないので、`dlna=1` の URL では普通の JPEG を配る。HEAD にも答える。表示するかどうかは機器による

@@ -354,9 +354,9 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         return {"url": f"{base}/api/tracks/{tid}/stream?cast=1&t={auth.link('track', tid)}",
                 "art": art_link(base, r["album_id"])}
 
-    def art_link(base: str, album_id: int, size: int = 1000) -> str | None:
+    def art_link(base: str, album_id: int, size: int = 1000, dlna: bool = False) -> str | None:
         a = db.one("SELECT art FROM albums WHERE id=?", (album_id,))
-        return f"{base}/api/art/{album_id}?size={size}&t={auth.link('art', album_id)}" if a and a["art"] else None
+        return f"{base}/api/art/{album_id}?size={size}{'&dlna=1' if dlna else ''}&t={auth.link('art', album_id)}" if a and a["art"] else None
 
     @app.post("/api/tracks/{tid}/loudness")
     def track_loudness(tid: int):
@@ -398,23 +398,27 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             tc.prepare(p, codec, cut=cut)
         return {"needed": True, "ready": ready}
 
-    def cached_file(request: Request, p: Path, media: str, cache: str):
+    def cached_file(request: Request, p: Path, media: str, cache: str, extra: dict | None = None):
         """期限が切れても、変わっていなければ送り直さない(遠くの回線で画像を何度も取らないように)。"""
         st = p.stat()
         tag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
-        headers = {"Cache-Control": cache, "ETag": tag}
+        headers = {"Cache-Control": cache, "ETag": tag, **(extra or {})}
         if request.headers.get("if-none-match") == tag:
             return Response(status_code=304, headers=headers)
         return FileResponse(p, media_type=media, headers=headers)
 
-    @app.get("/api/art/{album_id}")
-    def album_art(album_id: int, request: Request, size: int = 300, v: str = ""):
+    @app.api_route("/api/art/{album_id}", methods=["GET", "HEAD"])     # DLNA の機器は先に HEAD で調べることがある
+    def album_art(album_id: int, request: Request, size: int = 300, v: str = "", dlna: bool = False):
         r = db.one("SELECT art FROM albums WHERE id=?", (album_id,))
         if r is None or not r["art"]:
             raise HTTPException(404, "カバー画像がありません")
         p = art.thumb_path(cfg.art_dir, r["art"], size)
         if not p.is_file():
             raise HTTPException(404, "カバー画像がありません")
+        if dlna:
+            return cached_file(request, art.plain_path(cfg.art_dir, r["art"], size), "image/jpeg", "private, max-age=86400",
+                               {"transferMode.dlna.org": "Interactive",
+                                "contentFeatures.dlna.org": "DLNA.ORG_PN=JPEG_SM;DLNA.ORG_OP=00;DLNA.ORG_FLAGS=00d00000000000000000000000000000"})
         # v はカバーの中身から作った名前なので、同じ URL の中身は変わらない
         return cached_file(request, p, "image/jpeg", "private, max-age=31536000, immutable" if v else "private, max-age=86400")
 
@@ -533,7 +537,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         r = track_row(int(body["trackId"]))
         _, mime = stream_source(r, cast=True)        # 変換が要る曲は、機器に渡す前に変換しておく
         url = f"{cfg.cast_url}/api/tracks/{r['id']}/stream?cast=1&dlna=1&t={auth.link('track', r['id'])}"
-        cover = art_link(cfg.cast_url, r["album_id"], 300)
+        cover = art_link(cfg.cast_url, r["album_id"], 300, dlna=True)
         meta = didl(url, mime, r["title"], r["artist"], r["album"], cover, r["duration_ms"])
         dlna_call(lambda: dlna.get(did).load(url, meta, float(body.get("pos") or 0), body.get("play", True) is not False))
         return {"uri": url, "mime": mime}

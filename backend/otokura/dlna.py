@@ -136,11 +136,11 @@ def didl(url: str, mime: str, title: str, artist: str | None, album: str | None,
     c = lambda s: escape(_CTRL.sub("", s or ""))
     dur = f' duration="{hms((duration_ms or 0) / 1000)}.000"' if duration_ms else ""
     return ('<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" '
-            'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="1" parentID="0" restricted="1">'
+            'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/"><item id="1" parentID="0" restricted="1">'
             f"<dc:title>{c(title)}</dc:title>"
             + (f"<upnp:artist>{c(artist)}</upnp:artist><dc:creator>{c(artist)}</dc:creator>" if artist else "")
             + (f"<upnp:album>{c(album)}</upnp:album>" if album else "")
-            + (f"<upnp:albumArtURI>{c(art)}</upnp:albumArtURI>" if art else "")
+            + (f'<upnp:albumArtURI dlna:profileID="JPEG_SM">{c(art)}</upnp:albumArtURI>' if art else "")
             + f'<res protocolInfo="http-get:*:{c(mime)}:*"{dur}>{c(url)}</res>'
             "<upnp:class>object.item.audioItem.musicTrack</upnp:class></item></DIDL-Lite>")
 

@@ -225,3 +225,76 @@ def test_manual_add_and_remove(tmp_path, fake):
     with pytest.raises(dlna.DlnaError):
         d2.add("http://8.8.8.8/d.xml")             # 家の外には行かない
     assert d2.add(f"127.0.0.1:{fake.ssdp_port}").name == "書斎のプレーヤー"      # IP アドレスだけでも足せる
+
+
+def art_app(tmp_path):
+    """カバー付きの曲が 1 曲ある音蔵と、機器に渡す DIDL を返す。"""
+    import io, re
+    from mutagen.flac import FLAC, Picture
+    from PIL import Image
+    from otokura.app import create_app
+    from otokura.config import Config, Source
+    f = tmp_path / "m" / "a" / "01 one.flac"
+    make_audio(f)
+    buf = io.BytesIO()
+    Image.new("RGB", (800, 800), (200, 30, 30)).save(buf, "JPEG", progressive=True)
+    p = Picture()
+    p.type, p.mime, p.data = 3, "image/jpeg", buf.getvalue()
+    tags = FLAC(f)
+    tags.add_picture(p)
+    tags["TITLE"], tags["ALBUM"], tags["ARTIST"] = "one", "A", "B"
+    tags.save()
+    fake = Fake()
+    cfg = Config(sources=[Source("m", "M", tmp_path / "m")], data_dir=tmp_path / "data", scan_at=None, scan_on_start=False,
+                 lrclib=False, webinfo=False, auth=True, cast_url="http://192.168.0.252:8686")
+    app = create_app(cfg, start_background=False)
+    app.state.scanner.run()
+    app.state.dlna.hosts, app.state.dlna.port, app.state.dlna.multicast = ["127.0.0.1"], fake.ssdp_port, False
+    c = TestClient(app, client=("192.168.0.10", 50000))
+    code = (cfg.data_dir / "setup-code.txt").read_text().strip()
+    assert c.post("/api/auth/setup", json={"code": code, "name": "cross", "password": "correct horse"}).status_code == 200
+    from otokura.auth import TOTP_STEP, totp_code
+    import time
+    s = c.post("/api/auth/totp/start", json={"password": "correct horse"}).json()["secret"]
+    assert c.post("/api/auth/totp/confirm", json={"code": totp_code(s, int(time.time()) // TOTP_STEP)}).status_code == 200
+    tid = c.get("/api/library").json()["tracks"][0][0]
+    did = c.get("/api/dlna/devices?search=1").json()["devices"][0]["id"]
+    assert c.post(f"/api/dlna/{did}/load", json={"trackId": tid, "pos": 0}).status_code == 200
+    meta = fake.meta.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&amp;", "&")
+    fake.close() if hasattr(fake, "close") else None
+    url = re.search(r"<upnp:albumArtURI[^>]*>([^<]+)<", meta).group(1).replace("&amp;", "&")
+    return app, meta, url.split("8686", 1)[1]
+
+
+def device(app):
+    return TestClient(app, client=("192.168.0.77", 50000))     # 機器はログインしない
+
+
+def test_cover_tells_the_device_what_it_is(tmp_path):
+    _, meta, _ = art_app(tmp_path)
+    assert 'xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/"' in meta and 'dlna:profileID="JPEG_SM"' in meta
+
+
+def test_device_gets_a_plain_jpeg_it_can_read(tmp_path):
+    import io
+    from PIL import Image
+    app, _, path = art_app(tmp_path)
+    r = device(app).get(path)
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+    i = Image.open(io.BytesIO(r.content))
+    assert i.format == "JPEG" and not i.info.get("progressive") and max(i.size) <= 640 and i.mode == "RGB"   # 多くの機器は progressive を読めない
+    assert r.headers["transfermode.dlna.org"] == "Interactive"
+    assert "DLNA.ORG_PN=JPEG_SM" in r.headers["contentfeatures.dlna.org"]
+
+
+def test_device_can_check_the_cover_first(tmp_path):
+    app, _, path = art_app(tmp_path)
+    r = device(app).head(path)
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.content == b""
+
+
+def test_cover_without_the_signature_stays_closed(tmp_path):
+    app, _, path = art_app(tmp_path)
+    assert device(app).get(path.split("&t=")[0]).status_code == 401
+    assert device(app).head(path.split("&t=")[0]).status_code == 401
+    assert device(app).get(path[:-3] + "xxx").status_code == 401

@@ -64,3 +64,16 @@ def make_thumbs(data: bytes, art_dir: Path, key: str) -> tuple[str, int | None] 
 def thumb_path(art_dir: Path, name: str, size: int) -> Path:
     size = min(SIZES, key=lambda s: abs(s - size) if s >= size else 10_000 + size - s)
     return art_dir / f"{name}_{size}.jpg"
+
+
+def plain_path(art_dir: Path, name: str, size: int) -> Path:
+    """DLNA の機器に渡すカバー。多くの機器は progressive の JPEG を読めないので、普通の JPEG を作って置く。"""
+    from PIL import Image
+    src = thumb_path(art_dir, name, size)
+    dst = src.with_name(src.stem + "_plain.jpg")
+    if not dst.is_file() and src.is_file():
+        tmp = dst.with_suffix(".tmp")
+        with Image.open(src) as img:
+            img.convert("RGB").save(tmp, "JPEG", quality=90, progressive=False)
+        tmp.replace(dst)
+    return dst
