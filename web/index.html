@@ -628,6 +628,7 @@ const ico=(n,s=24)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" aria-hi
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmtT=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+const durLabel=s=>s.local&&s.d<=1?'--:--':fmtT(s.d);   // 端末の曲は長さを読むまで分からない
 const fmtTotal=s=>{const m=Math.round(s/60);return m>=60?`${Math.floor(m/60)}時間${m%60}分`:`${m}分`;};
 
 /* ================= sample data ================= */
@@ -753,7 +754,7 @@ function songRow(s,cxi,i,o={}){
     ${o.num?`<span class="no">${on&&st.playing?ico('vol',18):s.n}</span>`:cover(al)}
     <span class="tt"><b>${esc(s.t)}</b><small>${esc(o.num?(s.ar||al.a):(s.ar||al.a)+' / '+al.t)}</small></span>
     <button class="ib sm ${s.fav?'fav-on':''}" data-act="fav" data-id="${s.id}" aria-label="お気に入り" aria-pressed="${s.fav}">${ico(s.fav?'heart':'heart0',20)}</button>
-    <span class="du">${fmtT(s.d)}</span>
+    <span class="du">${durLabel(s)}</span>
     <button class="ib sm" data-act="menu" data-k="song" data-id="${s.id}" aria-label="メニュー">${ico('more',20)}</button></div>`;
 }
 const chipsFor=(al,s)=>{if(LIVE&&s)return [s.fmt||s.codec,needsTc(s)?(s.cue?'CUE から切り出して配信':`${TRANSCODE[s.codec]} に変換して配信`):s.playable?'そのまま配信':'再生できません'];const ext=al.f.split(' ')[0];const nat=['FLAC','MP3','AAC'].includes(ext);return [al.f,nat?'そのまま配信':`${ext} → FLAC に変換`];};
@@ -2117,9 +2118,9 @@ function deriveLibrary(){
   DECADES=[...new Set(AL.map(decadeOf))].filter(Boolean).sort();
 }
 async function loadLibrary(){
-  const d=await api('/api/library');
+  const d=await api('/api/library'),ld=await localRead();
   const C=(cols,row)=>Object.fromEntries(cols.map((c,i)=>[c,row[i]]));
-  const playingDb=cur()?cur().dbid:null,qDb=st.q.map(i=>SONGS[i]&&SONGS[i].dbid);
+  const keep=keepQueue();localFreeArt();
   AL.length=0;SONGS.length=0;for(const k in APPEARS)delete APPEARS[k];
   PLAYABLE=d.playable;TRANSCODE=d.transcode||{};ARTIST_ART=d.artistArt||{};
   SRCS.length=0;d.sources.forEach(x=>{SRCS.push({id:x.id,name:x.name,path:x.path});if(st.src[x.id]==null)st.src[x.id]=true;});
@@ -2135,10 +2136,16 @@ async function loadLibrary(){
     SONGS.push(s);al.tr.push(s.id);if(!al.f)al.f=s.fmt;
     if(t.artist!==al.a&&al.a!=='Various Artists'){const l=APPEARS[t.artist]=APPEARS[t.artist]||[];if(!l.includes(ai))l.push(ai);}
   });
-  await addLocalLibrary();
+  NAS_N={al:AL.length,s:SONGS.length,src:SRCS.length};
+  localApply(ld);
+  afterLibrary(keep);
+  localEnrichStart();
+}
+// 作り直しても再生中のキューを保つ(曲の番号は変わるので dbid で覚える)
+function keepQueue(){const playingDb=cur()?cur().dbid:null,qDb=st.q.map(i=>SONGS[i]&&SONGS[i].dbid);return {playingDb,qDb};}
+function afterLibrary({playingDb,qDb}){
   deriveLibrary();
   byDb=new Map(SONGS.map(s=>[s.dbid,s.id]));
-  // 再スキャン後も再生中のキューを保つ
   if(qDb.length){const q=qDb.map(x=>byDb.get(x)).filter(x=>x!=null);if(q.length){st.q=q;const i=q.indexOf(byDb.get(playingDb));st.qi=i>=0?i:0;}}
   st.rand=null;
 }
@@ -2297,7 +2304,8 @@ if(LIVE){
   for(const el of [audio,audioB]){
     const mine=f=>e=>{if(el===audio)f(e);};   // 先読み中・フェードアウト中の要素の出来事は無視する
     el.preload='auto';
-    el.addEventListener('loadedmetadata',mine(()=>{if(pendingSeek){try{audio.currentTime=pendingSeek;}catch(e){}}pendingSeek=0;}));
+    el.addEventListener('loadedmetadata',mine(()=>{if(pendingSeek){try{audio.currentTime=pendingSeek;}catch(e){}}pendingSeek=0;
+      const s=cur();if(s&&s.local&&s.d<=1&&isFinite(audio.duration)&&audio.duration>0){s.d=Math.max(1,Math.round(audio.duration));renderMini();renderXP();}}));
     el.addEventListener('timeupdate',mine(()=>{if(!castOn()){onListen(audio.currentTime);seamTick();}}));
     el.addEventListener('seeking',mine(()=>{clearTimeout(gapTimer);gapTimer=null;}));
     el.addEventListener('ended',mine(()=>{if(ted){tedAtEnd();return;}lt.ended=true;step(1,true);}));
@@ -2565,11 +2573,13 @@ const LDB={db:null,
   async run(store,mode,fn){const d=await this.open();return new Promise((ok,ng)=>{const t=d.transaction(store,mode),r=fn(t.objectStore(store));
     t.oncomplete=()=>ok(r&&r.result);t.onerror=()=>ng(t.error);t.onabort=()=>ng(t.error);});},
   all(s){return this.run(s,'readonly',x=>x.getAll());},get(s,k){return this.run(s,'readonly',x=>x.get(k));},
-  put(s,v){return this.run(s,'readwrite',x=>x.put(v));},del(s,k){return this.run(s,'readwrite',x=>x.delete(k));},
+  put(s,v){return this.run(s,'readwrite',x=>x.put(v));},putAll(s,l){return this.run(s,'readwrite',x=>{l.forEach(v=>x.put(v));});},
+  putKnown(s,l){return this.run(s,'readwrite',x=>{l.forEach(v=>{const r=x.getKey(v.id);r.onsuccess=()=>{if(r.result!==undefined)x.put(v);};});});},   // その間に外された曲は書き戻さない
+ del(s,k){return this.run(s,'readwrite',x=>x.delete(k));},
   async delWhere(s,pred){const d=await this.open();return new Promise((ok,ng)=>{const t=d.transaction(s,'readwrite');
     t.objectStore(s).openCursor().onsuccess=e=>{const c=e.target.result;if(!c)return;if(pred(c.value))c.delete();c.continue();};
     t.oncomplete=ok;t.onerror=()=>ng(t.error);});}};
-let LSRC=[],localBusy=null,localPerm={};
+let LSRC=[],localBusy=null,localPerm={},NAS_N={al:0,s:0,src:0};
 const localCanDir=()=>'showDirectoryPicker' in window;
 // CP932 を Latin-1 として読んだ文字化けを直す(サーバーと同じ考え方)
 function fixMoji(s){
@@ -2583,20 +2593,70 @@ function readTags(file){return loadTagReader().then(J=>new Promise(ok=>J.read(fi
 function probeMs(file){return new Promise(ok=>{const a=new Audio(),u=URL.createObjectURL(file);let done=false;
   const end=v=>{if(done)return;done=true;URL.revokeObjectURL(u);a.removeAttribute('src');ok(v);};
   a.preload='metadata';a.onloadedmetadata=()=>end(isFinite(a.duration)?Math.round(a.duration*1000):0);a.onerror=()=>end(0);setTimeout(()=>end(0),15000);a.src=u;});}
-// 1 曲分の情報。タグが無ければファイル名とフォルダ名から補う
+// 曲の長さをファイルの必要な所だけ読んで求める。読めない形式は 0
+const MP3_KBPS=[[0,32,40,48,56,64,80,96,112,128,160,192,224,256,320],[0,8,16,24,32,40,48,56,64,80,96,112,128,144,160]];
+const MP3_HZ=[[11025,12000,8000],null,[22050,24000,16000],[44100,48000,32000]];
+async function localDurationMs(file){
+  const at=async(a,n)=>{const b=await file.slice(a,a+n).arrayBuffer();return new DataView(b);};
+  const text=(v,o,n)=>{let r='';for(let i=0;i<n&&o+i<v.byteLength;i++)r+=String.fromCharCode(v.getUint8(o+i));return r;};
+  const u64=(v,o,le)=>le?v.getUint32(o,true)+v.getUint32(o+4,true)*2**32:v.getUint32(o)*2**32+v.getUint32(o+4);
+  const flac=async o=>{const v=await at(o+8,18),hz=v.getUint32(10)>>>12,n=(v.getUint8(13)&15)*2**32+v.getUint32(14);return hz?n/hz*1000:0;};
+  const mp4=async()=>{let o=0;for(let i=0;i<4096&&o<file.size;i++){const h=await at(o,16);let n=h.getUint32(0);const type=text(h,4,4),head=n===1?16:8;if(n===1)n=u64(h,8);else if(n===0)n=file.size-o;if(n<8)return 0;
+      if(type==='moov'){const end=o+n;o+=head;for(let j=0;j<4096&&o<end;j++){const c=await at(o,40),m=c.getUint32(0);if(text(c,4,4)==='mvhd'){const v1=c.getUint8(8)===1,ts=c.getUint32(v1?28:20),du=v1?u64(c,32):c.getUint32(24);return ts?du/ts*1000:0;}if(m<8)return 0;o+=m;}return 0;}
+      o+=n;}return 0;};
+  const wav=async()=>{let o=12,rate=0;for(let i=0;i<64&&o<file.size;i++){const h=await at(o,20),n=h.getUint32(4,true),id=text(h,0,4);if(id==='fmt ')rate=h.getUint32(16,true);if(id==='data')return rate?Math.min(n,file.size-o-8)/rate*1000:0;o+=8+n+n%2;}return 0;};
+  const ogg=async v=>{const p=27+v.getUint8(26),opus=text(v,p,8)==='OpusHead',rate=opus?48000:v.getUint32(p+12,true),skip=opus?v.getUint16(p+10,true):0;
+    const from=Math.max(0,file.size-65536),t=await at(from,65536);for(let i=t.byteLength-14;i>=0;i--)if(text(t,i,4)==='OggS')return rate?Math.max(0,u64(t,i+6,true)-skip)/rate*1000:0;return 0;};
+  const mp3=async o=>{const v=await at(o,131072);for(let i=0;i+4<v.byteLength;i++){if(v.getUint8(i)!==255||(v.getUint8(i+1)&0xE0)!==0xE0)continue;
+      const b1=v.getUint8(i+1),b2=v.getUint8(i+2),ver=b1>>3&3,lay=b1>>1&3,hzs=MP3_HZ[ver];if(!hzs||lay!==1||(b2>>4)===15||(b2>>4)===0||(b2>>2&3)===3)continue;
+      const mpeg1=ver===3,kbps=MP3_KBPS[mpeg1?0:1][b2>>4],hz=hzs[b2>>2&3],len=Math.floor((mpeg1?144:72)*kbps*1000/hz)+(b2>>1&1);
+      if(i+len+1<v.byteLength&&(v.getUint8(i+len)!==255||(v.getUint8(i+len+1)&0xE0)!==0xE0))continue;   // たまたま同じ並びになった所を飛ばす
+      const mono=(v.getUint8(i+3)>>6)===3,x=i+(mpeg1?(mono?21:36):(mono?13:21)),spf=mpeg1?1152:576;
+      if(x+16<v.byteLength&&['Xing','Info'].includes(text(v,x,4))&&v.getUint32(x+4)&1)return v.getUint32(x+8)*spf/hz*1000;
+      if(i+54<v.byteLength&&text(v,i+36,4)==='VBRI')return v.getUint32(i+50)*spf/hz*1000;
+      const tail=file.size>=128&&text(await at(file.size-128,3),0,3)==='TAG'?128:0;return (file.size-o-i-tail)*8/kbps;}
+    return 0;};
+  try{
+    let o=0,v=await at(0,512);
+    if(text(v,0,3)==='ID3'){const s=i=>v.getUint8(i)&127;o=10+(s(6)<<21|s(7)<<14|s(8)<<7|s(9))+(v.getUint8(5)&16?10:0);v=await at(o,512);}
+    const head=text(v,0,4);let ms=0;
+    if(head==='fLaC')ms=await flac(o);else if(text(v,4,4)==='ftyp')ms=await mp4();else if(head==='RIFF'&&text(v,8,4)==='WAVE')ms=await wav();else if(head==='OggS')ms=await ogg(v);else ms=await mp3(o);
+    return Math.round(ms)||0;
+  }catch(e){return 0;}
+}
+const ART_MAX=1000;   // NAS の曲の再生画面と同じ大きさ
+async function localArtBlob(p){
+  const b=new Blob([new Uint8Array(p.data)],{type:p.format||'image/jpeg'});
+  try{const bm=await createImageBitmap(b),m=Math.max(bm.width,bm.height);
+    if(m<=ART_MAX){bm.close();return b;}
+    const c=document.createElement('canvas'),g=c.getContext('2d');c.width=Math.round(bm.width*ART_MAX/m);c.height=Math.round(bm.height*ART_MAX/m);
+    g.imageSmoothingQuality='high';g.drawImage(bm,0,0,c.width,c.height);bm.close();
+    return await new Promise(ok=>c.toBlob(x=>ok(x&&x.size<b.size?x:b),'image/jpeg',.88));
+  }catch(e){return b;}
+}
+const artSaving=new Map();   // 同じアルバムの曲を同時に読んでも 1 回だけ保存する
+function localSaveArt(key,p){
+  if(!artSaving.has(key))artSaving.set(key,(async()=>{if(!await LDB.get('art',key))await LDB.put('art',{key,blob:await localArtBlob(p)});})().finally(()=>artSaving.delete(key)));
+  return artSaving.get(key);
+}
+// タグを読む前の 1 曲分の情報。ファイル名とフォルダ名から作る(pending の間に裏で読む)
+function localStub(file,rel,src){
+  const parts=rel.split('/'),fname=parts[parts.length-1].replace(/\.[^.]+$/,'');
+  const ext=(rel.split('.').pop()||'').toLowerCase(),no=fname.match(/\d+/);
+  return {id:src+'/'+rel,src,rel,codec:LOCAL_EXT[ext]||ext.toUpperCase(),size:file.size,mtime:file.lastModified,
+    title:fname.replace(/^\d+[\s._-]+/,''),artist:parts[parts.length-3]||'不明なアーティスト',album:parts[parts.length-2]||'(フォルダなし)',albumartist:'',
+    year:null,genre:'',no:no?+no[0]:null,disc:1,lyrics:null,art:null,ms:0,pending:true};
+}
+// 1 曲分の情報。タグが無ければファイル名とフォルダ名のまま
 async function localInfo(file,rel,src){
   const t=await readTags(file),raw=k=>{const v=t[k];return v&&(v.data!==undefined?v.data:v);};
   const str=v=>v==null?'':fixMoji(String(typeof v==='object'&&v.lyrics!==undefined?v.lyrics:v).replace(/\0/g,' ').trim());
-  const parts=rel.split('/'),fname=parts[parts.length-1].replace(/\.[^.]+$/,'');
-  const ext=(rel.split('.').pop()||'').toLowerCase(),codec=LOCAL_EXT[ext]||ext.toUpperCase();
-  const num=v=>{const m=String(v||'').match(/\d+/);return m?+m[0]:null;};
-  const info={id:src+'/'+rel,src,rel,codec,size:file.size,mtime:file.lastModified,
-    title:str(t.title)||fname.replace(/^\d+[\s._-]+/,''),artist:str(t.artist)||parts[parts.length-3]||'不明なアーティスト',
-    album:str(t.album)||parts[parts.length-2]||'(フォルダなし)',albumartist:str(raw('TPE2')||raw('ALBUMARTIST')||raw('aART')),
-    year:num(t.year),genre:str(t.genre),no:num(t.track)||num(fname),disc:num(raw('TPOS')||raw('DISCNUMBER')||raw('disk'))||1,
-    lyrics:str(t.lyrics)||null,art:null,ms:await probeMs(file)};
-  if(t.picture&&t.picture.data){const key=src+'|'+(info.albumartist||info.artist)+'|'+info.album;
-    if(!await LDB.get('art',key))await LDB.put('art',{key,blob:new Blob([new Uint8Array(t.picture.data)],{type:t.picture.format||'image/jpeg'})});info.art=key;}
+  const num=v=>{const m=String(v||'').match(/\d+/);return m?+m[0]:null;},base=localStub(file,rel,src);
+  const info={...base,pending:false,title:str(t.title)||base.title,artist:str(t.artist)||base.artist,
+    album:str(t.album)||base.album,albumartist:str(raw('TPE2')||raw('ALBUMARTIST')||raw('aART')),
+    year:num(t.year),genre:str(t.genre),no:num(t.track)||base.no,disc:num(raw('TPOS')||raw('DISCNUMBER')||raw('disk'))||1,
+    lyrics:str(t.lyrics)||null,ms:await localDurationMs(file)||await probeMs(file)};
+  if(t.picture&&t.picture.data){info.art=src+'|'+(info.albumartist||info.artist)+'|'+info.album;await localSaveArt(info.art,t.picture);}
   return info;
 }
 // フォルダ(ハンドル)の中の音楽ファイルを全部たどる
@@ -2606,23 +2666,70 @@ async function localPermOk(src,ask){
   if(src.kind!=='dir')return true;
   if(localPerm[src.id])return true;
   let p=await src.handle.queryPermission({mode:'read'});
-  if(p!=='granted'&&ask)p=await src.handle.requestPermission({mode:'read'});
-  return localPerm[src.id]=p==='granted';
+  if(p!=='granted'&&ask)try{p=await src.handle.requestPermission({mode:'read'});}catch(e){p='prompt';}   // 操作なしでは求められない(画面を消した間の曲送りなど)
+  localPerm[src.id]=p==='granted';
+  if(localPerm[src.id]&&ask)localEnrichStart();
+  return localPerm[src.id];
 }
 function localProgress(msg){localBusy=msg;const el=$('#localbusy');if(el)el.textContent=msg||'';}
 async function localScanDir(src){
   if(!await localPermOk(src,true)){toast('フォルダを読む許可がありません');return;}
-  const old=new Map((await LDB.all('tracks')).filter(t=>t.src===src.id).map(t=>[t.rel,t])),seen=new Set();let n=0,add=0;
+  const old=new Map((await LDB.all('tracks')).filter(t=>t.src===src.id).map(t=>[t.rel,t])),seen=new Set();let n=0,add=0,buf=[],shown=Date.now();
+  const flush=async()=>{if(buf.length){await LDB.putAll('tracks',buf);buf=[];}};
   for await(const [rel,fh] of walkDir(src.handle)){
     seen.add(rel);n++;localProgress(`「${src.name}」を読んでいます… ${n} 曲`);
     const f=await fh.getFile(),o=old.get(rel);
     if(o&&o.size===f.size&&o.mtime===f.lastModified)continue;
-    await LDB.put('tracks',await localInfo(f,rel,src.id));add++;
+    buf.push(localStub(f,rel,src.id));add++;
+    if(buf.length>=200)await flush();
+    if(add&&Date.now()-shown>4000){await flush();await localRebuild();render(true);shown=Date.now();}   // 大きなフォルダは途中でも一覧に出す
   }
+  await flush();
   await LDB.delWhere('tracks',t=>t.src===src.id&&!seen.has(t.rel));
-  localProgress(null);return {n,add,removed:[...old.keys()].filter(r=>!seen.has(r)).length};
+  localProgress(null);
+  const r={n,add,removed:[...old.keys()].filter(x=>!seen.has(x)).length};
+  if(add||r.removed)await localRebuild();
+  localEnrichStart();
+  return r;
 }
-async function localAfter(msg){try{await loadLibrary();}catch(e){}render(true);renderMini();renderXP();if(msg)toast(msg);}
+// タグ・曲の長さ・カバーを裏で読む。曲は先に一覧にあるので、読んでいる間も聴ける
+let enrichQ=[],enrichOn=false;
+const ENRICH_WORKERS=3;
+async function localEnrichStart(){
+  if(enrichOn)return;enrichOn=true;
+  let any=false;
+  try{
+    for(;;){
+      const ok=new Set();for(const x of (await LDB.all('sources')))if(await localPermOk(x,false))ok.add(x.id);
+      enrichQ=(await LDB.all('tracks')).filter(t=>t.pending&&ok.has(t.src));
+      if(!enrichQ.length)break;
+      any=true;let done=0,buf=[];const total=enrichQ.length;localProgress(`曲の情報を読んでいます… 0 / ${total} 曲(このまま聴けます)`);const flush=async()=>{if(buf.length){const l=buf;buf=[];await LDB.putKnown('tracks',l);}};
+      const work=async()=>{while(enrichQ.length){const t=enrichQ.shift();let info;
+        try{info=await localInfo(await localFile({src:t.src,rel:t.rel,lid:t.id},false),t.rel,t.src);}
+        catch(e){if(e&&e.denied){enrichQ=[];return;}info={...t,pending:false};}   // 読めない曲はファイル名のままにする
+        buf.push(info);localEnrichShow(info);done++;localProgress(`曲の情報を読んでいます… ${done} / ${total} 曲(このまま聴けます)`);
+        if(buf.length>=20)await flush();}};
+      await Promise.all(Array.from({length:ENRICH_WORKERS},work));
+      await flush();
+    }
+  }catch(e){}finally{enrichOn=false;localProgress(null);}
+  if(any)localEnrichEnd();
+}
+// 読み終えたらアルバムを並べ直す。曲の番号が変わるので画面も作り直す(入力中は待つ)
+async function localEnrichEnd(){
+  if(document.activeElement&&/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)){setTimeout(localEnrichEnd,3000);return;}
+  await localRebuild();render(true);renderMini();renderXP();
+}
+// 読み終えた曲を画面の情報へ反映する(曲の番号は変えない。アルバムの並べ直しは最後にまとめて)
+function localEnrichShow(t){
+  const i=byDb.get('L:'+t.id),s=i!=null&&SONGS[i];if(!s)return;
+  s.t=t.title;s.ar=t.artist;if(t.ms)s.d=Math.max(1,Math.round(t.ms/1000));
+  const al=AL[s.al];if(t.art&&al&&!al.artBlob)LDB.get('art',t.art).then(a=>{if(a&&!al.artBlob)al.artBlob=a.blob;if(s===cur()){renderMini();renderXP();}}).catch(()=>{});
+  if(s===cur()){renderMini();renderXP();}
+}
+// 再生する曲を先に読む
+function localEnrichFirst(lid){const i=enrichQ.findIndex(t=>t.id===lid);if(i>0)enrichQ.unshift(enrichQ.splice(i,1)[0]);}
+async function localAfter(msg){await localRebuild();render(true);renderMini();renderXP();if(msg)toast(msg);}
 async function localAddDir(){
   if(!localCanDir()){toast('このブラウザはフォルダをそのまま読めません。「曲を取り込む」を使ってください');return;}
   let h;try{h=await showDirectoryPicker({id:'otokura-music',mode:'read'});}catch(e){return;}
@@ -2637,11 +2744,11 @@ async function localImport(files){
   let src=(await LDB.all('sources')).find(x=>x.kind==='copy');
   if(!src){src={id:'devcopy',name:'取り込んだ曲',kind:'copy',added:Date.now()};await LDB.put('sources',src);}
   let n=0;
-  for(const f of files){n++;localProgress(`取り込んでいます… ${n} / ${files.length} 曲`);
+  for(const f of files){localProgress(`取り込んでいます… ${n+1} / ${files.length} 曲`);
     const rel=(f.webkitRelativePath||f.name).replace(/^\/+/,'');
-    try{await LDB.put('files',{id:src.id+'/'+rel,blob:f});await LDB.put('tracks',await localInfo(f,rel,src.id));}
+    try{await LDB.put('files',{id:src.id+'/'+rel,blob:f});await LDB.put('tracks',localStub(f,rel,src.id));n++;}
     catch(e){localProgress(null);toast('取り込めませんでした(端末の空き容量を確認してください): '+e.message);break;}}
-  localProgress(null);localAfter(`${n} 曲を取り込みました`);
+  localProgress(null);await localAfter(`${n} 曲を取り込みました`);localEnrichStart();
 }
 async function localRemove(id){
   const src=LSRC.find(x=>x.id===id);if(!src)return;
@@ -2649,44 +2756,55 @@ async function localRemove(id){
   await LDB.delWhere('tracks',t=>t.src===id);await LDB.delWhere('files',f=>f.id.startsWith(id+'/'));await LDB.delWhere('art',a=>a.key.startsWith(id+'|'));
   await LDB.del('sources',id);delete localPerm[id];localAfter('外しました');
 }
-// ライブラリに端末の曲を足す(loadLibrary の最後に呼ぶ)
-async function addLocalLibrary(){
-  if(!('indexedDB' in window))return;
-  let srcs,tracks,arts;
-  try{[srcs,tracks,arts]=await Promise.all([LDB.all('sources'),LDB.all('tracks'),LDB.all('art')]);}catch(e){return;}
+// 端末の曲を読む
+async function localRead(){
+  if(!('indexedDB' in window))return null;
+  try{const [srcs,tracks,arts]=await Promise.all([LDB.all('sources'),LDB.all('tracks'),LDB.all('art')]);return {srcs,tracks,arts};}catch(e){return null;}
+}
+// ライブラリに端末の曲を足す。カバーの URL は画面に出すときに作る
+function localApply(d){
+  if(!d)return;
+  const {srcs,tracks,arts}=d,artBlob=new Map(arts.map(a=>[a.key,a.blob])),byKey=new Map();
   LSRC=srcs;
-  for(const a of AL)if(a.artUrl)URL.revokeObjectURL(a.artUrl);
-  const artUrl=new Map(arts.map(a=>[a.key,URL.createObjectURL(a.blob)])),byKey=new Map();
   srcs.forEach(x=>{SRCS.push({id:x.id,name:'この端末: '+x.name,path:x.kind==='dir'?'(この端末のフォルダ)':'(この端末に取り込み)',local:true});if(st.src[x.id]==null)st.src[x.id]=true;});
   tracks.sort((a,b)=>a.src.localeCompare(b.src)||(a.disc-b.disc)||((a.no||999)-(b.no||999))||a.rel.localeCompare(b.rel)).forEach(t=>{
     const aa=t.albumartist||t.artist,key=t.src+'|'+aa+'|'+t.album;let ai=byKey.get(key);
     if(ai==null){ai=AL.length;byKey.set(key,ai);
       AL.push({id:ai,dbid:'L:'+key,local:true,t:t.album,a:aa,y:t.year||0,h:hashHue(t.album+aa),f:'',g:t.genre||'',tr:[],added:(t.mtime||0)/1000,src:t.src,art:false,
-        artUrl:t.art&&artUrl.get(t.art)||null,artv:'',folder:t.rel.split('/').slice(0,-1).join('/')});}
-    const al=AL[ai];if(!al.artUrl&&t.art)al.artUrl=artUrl.get(t.art)||null;
+        artBlob:null,artObj:null,get artUrl(){return this.artObj||(this.artBlob&&(this.artObj=URL.createObjectURL(this.artBlob)))||null;},
+        artv:'',folder:t.rel.split('/').slice(0,-1).join('/')});}
+    const al=AL[ai];if(!al.artBlob&&t.art)al.artBlob=artBlob.get(t.art)||null;
     const s={id:SONGS.length,dbid:'L:'+t.id,lid:t.id,local:true,al:ai,n:t.no||al.tr.length+1,disc:t.disc||1,t:t.title,ar:t.artist,d:Math.max(1,Math.round((t.ms||0)/1000)),
       plays:0,fav:false,rating:0,ago:999,skips:0,codec:t.codec,playable:!!(LOCAL_MIME[t.codec]&&audio&&audio.canPlayType(LOCAL_MIME[t.codec])),rel:t.rel,src:t.src,fmt:t.codec};
     SONGS.push(s);al.tr.push(s.id);if(!al.f)al.f=s.fmt;
   });
 }
+function localFreeArt(){for(const a of AL)if(a.artObj)URL.revokeObjectURL(a.artObj);}
+// 端末の曲だけ作り直す(NAS の一覧は取り直さない)
+async function localRebuild(){
+  const d=await localRead(),keep=keepQueue();
+  localFreeArt();
+  AL.length=NAS_N.al;SONGS.length=NAS_N.s;SRCS.length=NAS_N.src;
+  localApply(d);afterLibrary(keep);
+}
 let localUrlNow=null;
 // 端末の曲を audio に入れる。開くのに時間がかかるので 'pending' を返し、開けたら再生を続ける
 function localSrc(s){
   if(audio.dataset.dbid===String(s.dbid))return true;
-  switching=st.playing;audio.dataset.dbid=String(s.dbid);audio.removeAttribute('src');
+  switching=st.playing;audio.dataset.dbid=String(s.dbid);audio.removeAttribute('src');localEnrichFirst(s.lid);
   localFile(s).then(f=>{if(audio.dataset.dbid!==String(s.dbid))return;
     if(localUrlNow)URL.revokeObjectURL(localUrlNow);localUrlNow=URL.createObjectURL(f);audio.src=localUrlNow;
     if(st.playing)audio.play().then(()=>{switching=false;}).catch(()=>{});})
   .catch(e=>{st.playing=false;switching=false;renderMini();renderXP();toast(e.message);});
   return 'pending';
 }
-async function localFile(s){
+async function localFile(s,ask=true){
   const src=LSRC.find(x=>x.id===s.src);if(!src)throw new Error('この曲の置き場所が見つかりません');
   if(src.kind==='copy'){const r=await LDB.get('files',s.lid);if(!r)throw new Error('取り込んだファイルが見つかりません');return r.blob;}
-  if(!await localPermOk(src,true))throw new Error(`「${src.name}」を読む許可がありません。設定のメディアプロバイダで許可してください`);
+  if(!await localPermOk(src,ask))throw Object.assign(new Error(`「${src.name}」を読む許可がありません。設定のメディアプロバイダで許可してください`),{denied:true});
   let h=src.handle;const parts=s.rel.split('/');
   try{for(const p of parts.slice(0,-1))h=await h.getDirectoryHandle(p);return await (await h.getFileHandle(parts[parts.length-1])).getFile();}
-  catch(e){throw new Error('ファイルが見つかりません。メディアプロバイダで読み直してください');}
+  catch(e){if(e.name==='NotAllowedError'){localPerm[src.id]=false;throw Object.assign(new Error(`「${src.name}」を読む許可がありません。設定のメディアプロバイダで許可してください`),{denied:true});}throw new Error('ファイルが見つかりません。メディアプロバイダで読み直してください');}
 }
 const localOffsets=(()=>{try{return JSON.parse(localStorage.getItem('otokura.localOffsets')||'{}');}catch(e){return {};}})();
 // この端末の曲の歌詞: タグの歌詞に、読み込んだ・記録した歌詞(手動登録)をこの端末のブラウザに保存して重ねる。前の版を 1 つ残す
@@ -2714,7 +2832,7 @@ function localProvidersHtml(){
       <button class="btn ghost sm" data-act="localImportDir">${ico('folder',18)}フォルダごと取り込む</button>
       <small class="muted" id="localbusy" style="flex-basis:100%">${esc(localBusy||'')}</small></div></div>
     <p class="muted" style="font-size:13px;margin:10px 4px">この端末の曲は、この端末だけで再生します(NAS には送りません。Cast・プレイリスト・タグの編集は使えません)。
-    ${localCanDir()?'「フォルダを追加」はフォルダをそのまま読むので、曲を足したら「読み直す」を押してください。':''}「取り込む」は曲をこの端末のブラウザに保存するので、ネットが無くても再生できますが、その分の容量を使います。</p>
+    ${localCanDir()?'「フォルダを追加」はコピーせずそのまま読むので、端末の容量を使いません。曲を足したら「読み直す」を押してください。開き直したあとは、最初の再生で許可を聞かれることがあります。':''}「取り込む」は曲をこの端末のブラウザに保存するので、ネットが無くても再生できますが、その分の容量を使います。</p>
     <input type="file" id="localfiles" multiple accept="audio/*,.flac,.m4a,.opus,.ogg" hidden><input type="file" id="localdir" webkitdirectory hidden>`;
 }
 
