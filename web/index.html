@@ -497,6 +497,9 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 .auth-card .btn{min-height:46px;justify-content:center;background:#1d8fd6;color:#fff}
 .auth-card .btn:disabled{opacity:.6}
 .auth-err{color:#ffb4ab!important;min-height:20px;text-align:center}
+.auth-links{display:flex;justify-content:center;gap:20px;font-size:13px}
+.auth-links a,.auth-links button{color:#a8d4f2;background:none;border:0;padding:8px;font:inherit;text-decoration:underline;cursor:pointer}
+.auth-cmd{display:block;padding:10px 12px;border-radius:10px;background:rgba(0,0,0,.35);font-size:12px;line-height:1.5;word-break:break-all;user-select:all}
 /* ロード画面: 動かすのは transform と opacity だけ */
 .splash{position:fixed;inset:0;z-index:60;display:grid;place-items:center;background:radial-gradient(circle at 50% 42%,#123a5c 0,#07192b 48%,#030a12 100%);color:#fff;opacity:0;transition:opacity .16s ease;pointer-events:none}
 .splash[hidden]{display:none}
@@ -975,7 +978,7 @@ const SET_LIST=[
   ['インターフェース',[['theme',...['brush','テーマと配色','配色、カバーアートへの追従']],['home','home','ホーム','ショートカットと表示するセクション'],['np','play','再生中画面','背景、シークバー、評価バー'],['lyrics','lyrics','歌詞','文字の大きさ、ぼかし、取得']]],
   ['再生とミックス',[['mix','mix','ミックス','ミックスの長さと選び方'],['play','vol','再生','音量調整、曲間のつなぎ、キャッシュ'],['effects','tune','エフェクト','イコライザー、空間、真空管、ビジュアライザー']]],
   ['サーバー',[['server','dns','サーバー情報','NAS の状態、バージョン']]],
-  ['アカウント',[['account','people','アカウント','ログイン中の名前、パスワード、家族の追加']]]
+  ['アカウント',[['account','people','アカウント','ログイン中の名前、パスワード、家族の追加'],['help','info','使い方','初期設定とアプリのマニュアル']]]
 ];
 function genericSettings(key){
   const cfg=SETS[key];
@@ -993,6 +996,7 @@ function pageSettings(sub){
   }
   if(LIVE&&!isAdmin()&&ADMIN_PAGES.includes(sub))return {title:'設定',back:true,html:'<div class="empty"><b>管理者だけが開けるページです</b></div>'};
   if(LIVE&&sub==='account')return accountPage();
+  if(sub==='help')return {title:'使い方',back:true,html:`<div class="panel"><a class="prow" href="manual.html" target="_blank" rel="noopener"><span class="lead">${ico('info',24)}</span><span class="tt"><b>マニュアルを開く</b><small>初期設定とアプリの使い方(新しいタブで開きます)</small></span>${ico('chev',20)}</a></div>`};
   if(SETS[sub])return {title:SETS[sub].title,back:true,html:genericSettings(sub)+(LIVE?liveExtra(sub):'')};
   if(sub==='effects')return {title:'エフェクト',back:true,html:LIVE?`<div class="fxbody">${fxBody()}</div>`:'<div class="empty"><b>サーバーから開いたときに使えます</b></div>'};
   if(LIVE&&['providers','outputs','formats','server'].includes(sub))return livePage(sub);
@@ -2822,11 +2826,25 @@ function authForm(s,done){
     box.querySelector('form').addEventListener('submit',e=>{e.preventDefault();send('/api/auth/setup',{code:$('#au-code').value,name:$('#au-name').value,password:$('#au-pw').value},e.target.querySelector('button[type=submit]'));});
     return;
   }
+  const forgot=()=>{
+    box.innerHTML=`<form class="auth-card" autocomplete="off">${logo}<h1>パスワードを忘れたとき</h1>
+      <p><b>家族の方</b>: 管理者に、設定の「アカウント」で再設定してもらってください。</p>
+      <p><b>管理者の方</b>: NAS に SSH で入り、次のコマンドで確認コードを作ります(15 分有効)。</p>
+      <code class="auth-cmd">docker exec otokura python -m otokura.auth reset-code</code>
+      <label>確認コード<input id="au-code" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label>新しいパスワード(8 文字以上)<input id="au-pw" type="password" required minlength="8" autocomplete="new-password"></label>
+      <button class="btn" type="submit">再設定してログイン</button><p class="auth-err" role="alert"></p>
+      <div class="auth-links"><button type="button" id="au-back">ログインに戻る</button></div></form>`;
+    $('#au-back').addEventListener('click',draw);
+    box.querySelector('form').addEventListener('submit',e=>{e.preventDefault();send('/api/auth/reset',{code:$('#au-code').value,password:$('#au-pw').value},e.target.querySelector('button[type=submit]'));});
+  };
   const draw=()=>{
     box.innerHTML=`<form class="auth-card">${logo}<div class="auth-names" role="radiogroup" aria-label="名前">${s.names.map(n=>`<button type="button" class="chip" role="radio" data-n="${esc(n)}" aria-checked="${n===who}" aria-pressed="${n===who}">${esc(n)}</button>`).join('')}</div>
       <input type="text" autocomplete="username" value="${esc(who)}" hidden>
       <label>パスワード<input id="au-pw" type="password" required autocomplete="current-password"></label>
-      <button class="btn" type="submit">ログイン</button><p class="auth-err" role="alert"></p></form>`;
+      <button class="btn" type="submit">ログイン</button><p class="auth-err" role="alert"></p>
+      <div class="auth-links"><button type="button" id="au-forgot">パスワードを忘れた</button><a href="manual.html" target="_blank" rel="noopener">使い方</a></div></form>`;
+    $('#au-forgot').addEventListener('click',forgot);
     box.querySelectorAll('[data-n]').forEach(b=>b.addEventListener('click',()=>{who=b.dataset.n;draw();$('#au-pw').focus();}));
     box.querySelector('form').addEventListener('submit',e=>{e.preventDefault();
       if(!who){box.querySelector('.auth-err').textContent='名前を選んでください';return;}

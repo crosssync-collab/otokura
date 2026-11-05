@@ -326,6 +326,52 @@ def test_family_first_play_fetches_lyrics_and_saves_for_everyone(env):
     assert kid.get(f"/api/tracks/{b}/lyrics").json()["lrclibMiss"] is True
 
 
+def test_admin_password_reset_with_code_from_nas(env):
+    import os
+    from otokura import auth as A
+    app, cfg, _ = env
+    assert client(app).post("/api/auth/reset", json={"code": "x", "password": PW}).status_code == 409   # 管理者がまだいない
+    admin = setup_admin(app, cfg)
+    wife = add_member(app, admin)
+    c = client(app, "192.168.0.60")
+    NEW = "brand new password"
+    # コードを作っていなければ通らない
+    assert c.post("/api/auth/reset", json={"code": "", "password": NEW}).status_code == 403
+    code = A.write_reset_code(cfg.data_dir)
+    path = cfg.data_dir / "reset-code.txt"
+    assert path.is_file()
+    assert c.post("/api/auth/reset", json={"code": "wrong", "password": NEW}).status_code == 403
+    # パスワードが短いときはコードを使い切らない
+    assert c.post("/api/auth/reset", json={"code": code, "password": "short"}).status_code == 422 and path.is_file()
+    # 期限切れ(15 分)は通らず、ファイルも消える
+    old = time.time() - A.RESET_S - 5
+    os.utime(path, (old, old))
+    assert c.post("/api/auth/reset", json={"code": code, "password": NEW}).status_code == 403 and not path.exists()
+    code = A.write_reset_code(cfg.data_dir)
+    r = c.post("/api/auth/reset", json={"code": code, "password": NEW})
+    assert r.status_code == 200 and r.json()["user"]["role"] == "admin" and c.get("/api/users").status_code == 200   # そのままログイン
+    assert not path.exists()
+    assert admin.get("/api/library").status_code == 401                               # 前のログインは切れる
+    assert client(app).post("/api/auth/login", json={"name": "cross", "password": PW}).status_code == 401
+    assert client(app).post("/api/auth/login", json={"name": "cross", "password": NEW}).status_code == 200
+    assert client(app).post("/api/auth/reset", json={"code": code, "password": "another password"}).status_code == 403   # 使い回せない
+    assert wife.get("/api/library").status_code == 200                                # 家族には影響しない
+    # 総当たりは止める
+    A.write_reset_code(cfg.data_dir)
+    d = client(app, "192.168.0.61")
+    codes = [d.post("/api/auth/reset", json={"code": "bad", "password": NEW}).status_code for _ in range(6)]
+    assert codes[:5] == [403] * 5 and codes[5] == 429
+
+
+def test_reset_code_command_prints_code(tmp_path, monkeypatch, capsys):
+    from otokura import auth as A
+    monkeypatch.setenv("OTOKURA_DATA", str(tmp_path))
+    assert A.main(["reset-code"]) == 0
+    out = capsys.readouterr().out
+    assert (tmp_path / "reset-code.txt").read_text().strip() in out and "15 分" in out
+    assert A.main([]) == 2
+
+
 def test_dlna_for_family_only_from_home(env):
     app, cfg, _ = env
     admin = setup_admin(app, cfg)

@@ -4,6 +4,8 @@
 - パスワードは scrypt。ログインは 1 年間そのまま(Cookie の値は DB にハッシュで置く)。続けて間違えると待ち時間を入れる
 - 家族の書き込みは MEMBER_WRITES の許可リストだけ。新しい API は既定で管理者だけになる
 - Cast・DLNA の機器はログインできないので、曲ごと・期限付きの署名を URL に付ける
+- 管理者がパスワードを忘れたら、NAS で `docker exec otokura python -m otokura.auth reset-code` を実行して確認コードを作り、
+  ログイン画面で再設定する。NAS に入れる人だけができる。家族のパスワードは管理者が画面で再設定する
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import logging
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 from pathlib import Path
@@ -29,6 +32,7 @@ LINK_S = 24 * 3600
 MIN_PASSWORD = 8
 MAX_FAILS = 5
 SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}
+RESET_S = 15 * 60
 _TAILNET = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 
 # 家族に許す書き込み。ここに無いものは管理者だけ
@@ -70,6 +74,19 @@ def is_home(request: Request) -> bool:
     return a.is_private and not a.is_loopback and not any(a in n for n in _TAILNET if n.version == a.version)
 
 
+def _write_code(path: Path) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    code = secrets.token_hex(5)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(code + "\n")
+    return code
+
+
+def write_reset_code(data_dir: Path) -> str:
+    return _write_code(Path(data_dir) / "reset-code.txt")
+
+
 class Auth:
     def __init__(self, db, data_dir: Path, enabled: bool = True):
         self.db, self.data_dir, self.enabled = db, Path(data_dir), enabled
@@ -89,10 +106,7 @@ class Auth:
     def _ensure_setup_code(self) -> None:
         if self.code_path.is_file():
             return
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.code_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(secrets.token_hex(5) + "\n")
+        _write_code(self.code_path)
         log.warning("最初の管理者を登録してください。確認コードは %s にあります", self.code_path)
 
     def setup(self, code: str, name: str, password: str) -> int:
@@ -107,6 +121,32 @@ class Auth:
         uid = self.create_user(name, password, "admin", uid=1)    # 今までの記録は id=1 に移してある
         self.code_path.unlink(missing_ok=True)
         return uid
+
+    def reset_admin(self, request: Request, code: str, password: str) -> int:
+        """NAS で作った確認コードで、管理者のパスワードを再設定する。その管理者の前のログインは切れる。"""
+        row = self.db.one("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1")
+        if row is None:
+            raise HTTPException(409, "管理者がまだ登録されていません")
+        key = ("#reset", request.client.host if request.client else "")
+        wait = self._throttled(key)
+        if wait:
+            raise HTTPException(429, f"続けて間違えたので、{int(wait) + 1} 秒待ってください")
+        path = self.data_dir / "reset-code.txt"
+        try:
+            real, age = path.read_text().strip(), time.time() - path.stat().st_mtime
+        except OSError:
+            real, age = "", 0
+        if real and age > RESET_S:
+            path.unlink(missing_ok=True)
+            real = ""
+        if not real or not hmac.compare_digest(real.encode(), str(code).strip().encode()):
+            self._failed(key)
+            raise HTTPException(403, "確認コードが違うか、期限(15 分)が切れています")
+        self.set_password(row["id"], password)    # 短いパスワードならここで止まり、コードは使い切らない
+        path.unlink(missing_ok=True)
+        with self._lock:
+            self._fails.pop(key, None)
+        return row["id"]
 
     # ---------- アカウント ----------
     @staticmethod
@@ -266,3 +306,17 @@ class Auth:
             allowed = any(p.fullmatch(path) for p in MEMBER_WRITES)
         if not allowed:
             raise HTTPException(403, "この操作は管理者だけができます")
+
+
+def main(argv: list[str]) -> int:
+    if argv != ["reset-code"]:
+        print("使い方: python -m otokura.auth reset-code")
+        return 2
+    code = write_reset_code(Path(os.environ.get("OTOKURA_DATA", "/data")))
+    print(f"確認コード: {code}")
+    print("音蔵のログイン画面の「パスワードを忘れた」に入力してください。15 分で使えなくなります。")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

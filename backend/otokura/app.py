@@ -123,6 +123,12 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     def auth_login(request: Request, response: Response, body: dict = Body(...)):
         return auth_state(request, auth.login(request, response, body.get("name", ""), body.get("password", "")))
 
+    @app.post("/api/auth/reset")
+    def auth_reset(request: Request, response: Response, body: dict = Body(...)):
+        uid = auth.reset_admin(request, body.get("code", ""), body.get("password", ""))
+        auth.start_session(request, response, uid)
+        return auth_state(request, auth.public(db.one("SELECT * FROM users WHERE id=?", (uid,))))
+
     @app.post("/api/auth/logout")
     def auth_logout(request: Request, response: Response):
         auth.logout(request, response)
@@ -663,7 +669,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         return {"ok": True}
 
     # ホーム画面に追加するためのファイル(PWA)。決まった名前だけ配る
-    web_files = {"manifest.webmanifest": "application/manifest+json", "sw.js": "text/javascript",
+    web_files = {"manual.html": "text/html; charset=utf-8", "manifest.webmanifest": "application/manifest+json", "sw.js": "text/javascript",
                  "icon.svg": "image/svg+xml", "icon-192.png": "image/png", "icon-512.png": "image/png",
                  "icon-180.png": "image/png"}
 
