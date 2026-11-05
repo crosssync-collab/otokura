@@ -1059,7 +1059,7 @@ const refresh=()=>render(true);
 const LYR_API=(typeof window.OTOKURA_API==='string')?window.OTOKURA_API:null;
 const lyrCache=new Map();   // 曲ID → {state:'loading'|'ready'|'error', data, v}
 const lyrMock=new Map();
-const LYR_SRC={'sidecar:ttml':'TTML ファイル','sidecar:lrc':'LRC ファイル','sidecar:txt':'テキストファイル','tag:sylt':'タグ(SYLT)','tag:lrc':'タグ','tag:text':'タグ','folder:ttml':'歌詞フォルダ(TTML)','folder:lrc':'歌詞フォルダ(LRC)','folder:txt':'歌詞フォルダ','lrclib':'LRCLIB','manual':'手動登録'};
+const LYR_SRC={personal:'自分の修正','sidecar:ttml':'TTML ファイル','sidecar:lrc':'LRC ファイル','sidecar:txt':'テキストファイル','tag:sylt':'タグ(SYLT)','tag:lrc':'タグ','tag:text':'タグ','folder:ttml':'歌詞フォルダ(TTML)','folder:lrc':'歌詞フォルダ(LRC)','folder:txt':'歌詞フォルダ','lrclib':'LRCLIB','manual':'手動登録'};
 const reduceMotion=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
 function setLyr(id,o){const p=lyrCache.get(id);o.v=((p&&p.v)||0)+1;if(p&&p.autoTried)o.autoTried=true;lyrCache.set(id,o);return o;}
 
@@ -1139,7 +1139,8 @@ const lyrMain=(s,ly)=>{if(ted&&ted.kind==='line'&&ted.id===s.id)return ted.main;
 //                「ここから間奏」で今の行を終わらせる。保存すると「手動登録」の LRC になり、前の版に 1 回戻せる
 let ted=null,tmpOff=null;   // tmpOff={id,ms}: その場だけの調整。曲が変わったら消える
 const FAR=1e12;
-const tedDraftKey=s=>'otokura.lyrdraft.'+(s.dbid||s.id);
+const lyrMine=s=>LIVE&&!isAdmin()&&!s.local;   // 家族の編集は、その人だけの修正として保存される
+const tedDraftKey=s=>'otokura.lyrdraft.'+(AUTH.user&&!s.local?AUTH.user.id+'.':'')+(s.dbid||s.id);
 const sungTexts=L=>L.filter(l=>l.text).map(l=>l.text).join('\n');
 function tedDraft(s,L){try{const d=JSON.parse(localStorage.getItem(tedDraftKey(s)));return d&&d.src&&d.k>=0&&sungTexts(d.src)===sungTexts(L)?d:null;}catch(e){return null;}}
 function tedLines(s,c){const m=lyrMain(s,c.data.lyrics);if(!m||!m.lines.some(l=>l.text))return null;
@@ -1147,7 +1148,6 @@ function tedLines(s,c){const m=lyrMain(s,c.data.lyrics);if(!m||!m.lines.some(l=>
   return L;}
 function tedEnter(kind,resume){
   const s=cur(),c=lyrCache.get(s.id);closeSheet();if(!c||!c.data)return;
-  if(!isAdmin()&&!s.local){toast('歌詞の編集は管理者だけができます');return;}
   const L=tedLines(s,c);if(!L){toast('この曲の歌詞はありません');return;}
   const back={lyr:st.lyr,full:st.lyrFull};st.lyr=true;if(isWide())st.lyrFull=true;
   if(kind==='off'){ted={kind,id:s.id,v:lyrOffset(s.id),back};tmpOff=null;}
@@ -1184,7 +1184,7 @@ function tedDelBlank(){const r=ted,j=tedNextBlank();if(j<0){toast('この先に�
 function tedUndo(){const r=ted;if(r.k<0)return;r.t[r.k]=null;r.e[r.k]=null;r.k--;tedChanged();}
 function tedSave(){
   const r=ted,s=SONGS[r.id];
-  if(r.kind==='off'){const v=r.v;tedExit();lyrSave(s.id,'PUT','/offset',{offsetMs:v},'歌詞のずれを保存しました');return;}
+  if(r.kind==='off'){const v=r.v;tedExit();lyrSave(s.id,'PUT','/offset',{offsetMs:v},lyrMine(s)?'歌詞のずれを保存しました(あなただけに効きます)':'歌詞のずれを保存しました');return;}
   const L=r.src,N=L.length,k=r.k,t=r.t.slice(),e=r.e.slice();
   if(k<0){toast('まだ 1 行も記録していません');return;}
   if(k<N-1){   // 押していない行は、最後の記録から曲の終わりまでに元の間隔を伸び縮みさせて埋める
@@ -1193,7 +1193,7 @@ function tedSave(){
   const f=ms=>`[${String(Math.floor(ms/60000)).padStart(2,'0')}:${(ms%60000/1000).toFixed(2).padStart(5,'0')}]`;
   const text=t.map((ms,i)=>f(ms)+L[i].text+(e[i]!=null?'\n'+f(e[i]):'')).join('\n');   // 空の行 = そこで前の行が終わる(間奏)
   try{localStorage.removeItem(tedDraftKey(s));}catch(err){}
-  tedExit();lyrSave(s.id,'PUT','',{text,offsetMs:0},'行ごとのタイミングを保存しました(メニューから前の版に戻せます)');
+  tedExit();lyrSave(s.id,'PUT','',{text,offsetMs:0},lyrMine(s)?'行ごとのタイミングを保存しました(あなただけに効きます。メニューから戻せます)':'行ごとのタイミングを保存しました(メニューから前の版に戻せます)');
 }
 function tedCancel(){
   const r=ted;if(!r)return;tedExit();
@@ -1312,7 +1312,7 @@ function lyrBar(s){return (ted&&ted.id===s.id?tedBar(s):lyrBarIn(s))+lyrSeek(s);
 function tedBar(s){
   const r=ted,b=(act,icon,label,cls='',attrs='')=>`<button class="tedb ${cls}" data-act="${act}" ${attrs}>${ico(icon,22)}<span>${label}</span></button>`;
   const play=b('toggle',st.playing?'pause':'play',st.playing?'一時停止':'再生');
-  const head=`<div class="tedhead"><span class="tedtag">${ico('edit',16)}${r.kind==='off'?`出だしの位置を調整中 ・ ${offLabel(r.v)}`:`行ごとに記録中 ・ ${r.k+1} / ${r.src.length} 行${r.k>=0&&!r.src[r.k].text?'(待機)':''}`}</span>
+  const head=`<div class="tedhead"><span class="tedtag">${ico('edit',16)}${lyrMine(SONGS[r.id])?'自分用 ・ ':''}${r.kind==='off'?`出だしの位置を調整中 ・ ${offLabel(r.v)}`:`行ごとに記録中 ・ ${r.k+1} / ${r.src.length} 行${r.k>=0&&!r.src[r.k].text?'(待機)':''}`}</span>
     <span class="sp"></span><button class="btn ghost sm" data-act="tedCancel">やめる</button><button class="btn sm" data-act="tedSave">${ico('check',18)}保存</button></div>`;
   const est=r.kind==='off'&&(lyrMain(s,lyrCache.get(s.id).data.lyrics)||{}).estimated;
   const row=r.kind==='off'
@@ -1360,11 +1360,10 @@ function lyrMenuSheet(){
   const info=ly&&main?`<p class="muted" style="margin:4px 14px 8px;font-size:13px">${esc(LYR_SRC[ly.source]||ly.source)} ・ ${ly.hasWords?'語ごとに同期':ly.synced?'行ごとに同期':'同期なし'} ・ ${main.lines.filter(l=>l.text).length} 行${main.agents&&main.agents.length>1?' ・ 歌い手 '+main.agents.length+' 人':''}</p>`:'';
   openSheet('lyr','歌詞',info
     +(d&&d.canFetch?mi('lyrFetch','search','LRCLIB で探し直す'):'')
-    +(isAdmin()||s.local?mi('lyrPaste','add','歌詞を貼り付ける')
-    +mi('lyrFile','folder','ファイルから読み込む(.lrc / .ttml / .txt)')
-    +(ly&&!ly.instrumental?mi('tedSheet','edit','タイミングを編集(タイミング調整の長押し・3 回押しでも開けます)'):'')
+    +(isAdmin()||s.local?mi('lyrPaste','add','歌詞を貼り付ける')+mi('lyrFile','folder','ファイルから読み込む(.lrc / .ttml / .txt)'):'')
+    +(ly&&!ly.instrumental?mi('tedSheet','edit',lyrMine(s)?'タイミングを編集(自分用。ほかの人には影響しません)':'タイミングを編集(タイミング調整の長押し・3 回押しでも開けます)'):'')
     +(d&&d.hasPrev?mi('tedRestore','back','記録・登録する前の歌詞に戻す'):'')
-    +(ly&&ly.source==='manual'?mi('lyrClear','close','手動で登録した歌詞を削除'):''):'')
+    +(lyrMine(s)?(d&&d.personal?mi('lyrClear','close','自分の修正を消して、みんなの歌詞に戻す'):''):ly&&ly.source==='manual'?mi('lyrClear','close','手動で登録した歌詞を削除'):'')
 );
 }
 function lyrPasteSheet(){
@@ -1880,7 +1879,7 @@ const ACT={
         await lyrSave(id,'PUT','',{text:t},`${f.name} を読み込みました`);}
       catch(e){toast(`${f.name} を読み込めませんでした: ${e.message||e}`);}});
     i.click();},
-  lyrClear:()=>{closeSheet();lyrSave(cur().id,'DELETE','/manual',undefined,'手動で登録した歌詞を削除しました');},
+  lyrClear:()=>{closeSheet();lyrSave(cur().id,'DELETE','/manual',undefined,lyrMine(cur())?'自分の修正を消しました':'手動で登録した歌詞を削除しました');},
   tedSheet:()=>{closeSheet();tedSheet();},
   tedOff:()=>tedEnter('off'),
   tedLine:d=>tedEnter('line',!!d.resume),

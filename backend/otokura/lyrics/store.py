@@ -1,8 +1,9 @@
 """歌詞の保存(SQLite)。
 
 - lyrics_local : スキャンで手元(サイドカー/タグ、無ければ歌詞フォルダ)から読んだ結果。ファイルの更新時刻で差分更新
-- lyrics_user  : 利用者の手動登録・LRCLIB 取得結果・ずれ補正(音楽ファイルには書き込まない)
-表示に使う歌詞の優先順位: 手動 > 手元 > LRCLIB
+- lyrics_user  : 管理者の手動登録・LRCLIB 取得結果・ずれ補正。全員の既定になる(音楽ファイルには書き込まない)
+- lyrics_personal : 家族それぞれのタイミングの修正。その人にだけ効く
+表示に使う歌詞の優先順位: 自分の修正 > 手動 > 手元 > LRCLIB
 """
 from __future__ import annotations
 
@@ -41,6 +42,14 @@ CREATE TABLE IF NOT EXISTS lyrics_user (
   lrclib_checked_at REAL,
   lrclib_miss       INTEGER NOT NULL DEFAULT 0,
   manual_prev       TEXT               -- 手動の歌詞を書き換える前の版 {"body": ..., "offsetMs": ...}(1 つだけ戻せる)
+);
+CREATE TABLE IF NOT EXISTS lyrics_personal (
+  user_id    INTEGER NOT NULL,
+  track_id   TEXT NOT NULL,
+  offset_ms  INTEGER,                 -- NULL なら全員の既定のずれを使う
+  body       TEXT,                    -- NULL なら全員の既定の歌詞を使う
+  prev       TEXT,                    -- 書き換える前の版 {"body": ..., "offsetMs": ...}(1 つだけ戻せる)
+  PRIMARY KEY(user_id, track_id)
 );
 """
 
@@ -140,6 +149,64 @@ class LyricsStore:
 
     def _ensure_user(self, track_id: str) -> None:
         self.db.execute("INSERT OR IGNORE INTO lyrics_user(track_id) VALUES(?)", (track_id,))
+
+    @_locked
+    def get_for(self, track_id: str, user_id: int) -> dict:
+        """全員の既定に、その人の修正を重ねたもの。"""
+        out = self.get(track_id)
+        p = self._personal(user_id, track_id)
+        out["personal"] = bool(p and (p["body"] or p["offset_ms"] is not None))
+        out["hasPrev"] = bool(p and p["prev"])
+        if p and p["body"]:
+            out["lyrics"], out["available"] = json.loads(p["body"]), True
+        if p and p["offset_ms"] is not None:
+            out["offsetMs"] = p["offset_ms"]
+        return out
+
+    def _personal(self, user_id: int, track_id: str) -> sqlite3.Row | None:
+        return self.db.execute("SELECT * FROM lyrics_personal WHERE user_id=? AND track_id=?", (user_id, track_id)).fetchone()
+
+    def _personal_keep_prev(self, user_id: int, track_id: str) -> None:
+        """書き換える前の版を残す。行が無ければ作る。"""
+        p = self._personal(user_id, track_id)
+        prev = json.dumps({"body": p["body"], "offsetMs": p["offset_ms"]}, ensure_ascii=False) if p else json.dumps({"body": None, "offsetMs": None})
+        self.db.execute("INSERT INTO lyrics_personal(user_id,track_id,prev) VALUES(?,?,?) "
+                        "ON CONFLICT(user_id,track_id) DO UPDATE SET prev=excluded.prev", (user_id, track_id, prev))
+
+    @_locked
+    def set_personal(self, user_id: int, track_id: str, text: str, duration_ms: int | None = None, offset_ms: int | None = None) -> None:
+        ly = parse_any(text, source="personal", track_ms=duration_ms)
+        self._personal_keep_prev(user_id, track_id)
+        self.db.execute("UPDATE lyrics_personal SET body=? WHERE user_id=? AND track_id=?",
+                        (json.dumps(ly.to_json(), ensure_ascii=False), user_id, track_id))
+        if offset_ms is not None:
+            self.db.execute("UPDATE lyrics_personal SET offset_ms=? WHERE user_id=? AND track_id=?",
+                            (max(-OFFSET_MAX_MS, min(OFFSET_MAX_MS, int(offset_ms))), user_id, track_id))
+        self.db.commit()
+
+    @_locked
+    def set_personal_offset(self, user_id: int, track_id: str, offset_ms: int) -> None:
+        self.db.execute("INSERT INTO lyrics_personal(user_id,track_id,offset_ms) VALUES(?,?,?) "
+                        "ON CONFLICT(user_id,track_id) DO UPDATE SET offset_ms=excluded.offset_ms",
+                        (user_id, track_id, max(-OFFSET_MAX_MS, min(OFFSET_MAX_MS, int(offset_ms)))))
+        self.db.commit()
+
+    @_locked
+    def clear_personal(self, user_id: int, track_id: str) -> None:
+        self._personal_keep_prev(user_id, track_id)
+        self.db.execute("UPDATE lyrics_personal SET body=NULL, offset_ms=NULL WHERE user_id=? AND track_id=?", (user_id, track_id))
+        self.db.commit()
+
+    @_locked
+    def restore_personal(self, user_id: int, track_id: str) -> bool:
+        p = self._personal(user_id, track_id)
+        if not p or not p["prev"]:
+            return False
+        v = json.loads(p["prev"])
+        self.db.execute("UPDATE lyrics_personal SET body=?, offset_ms=?, prev=NULL WHERE user_id=? AND track_id=?",
+                        (v.get("body"), v.get("offsetMs"), user_id, track_id))
+        self.db.commit()
+        return True
 
     @_locked
     def get(self, track_id: str) -> dict:

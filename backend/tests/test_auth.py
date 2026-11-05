@@ -115,8 +115,7 @@ def test_member_cannot_do_admin_things(env):
               ("POST", "/api/loudness/start"), ("POST", "/api/loudness/stop"), ("POST", "/api/webinfo/start"), ("POST", "/api/webinfo/check"),
               ("POST", "/api/webinfo/stop"), ("POST", "/api/artists/refresh"), ("POST", "/api/albums/1/info/refresh"),
               ("POST", "/api/dlna/devices"), ("DELETE", "/api/dlna/devices/x"),
-              ("PUT", f"/api/tracks/{t}/lyrics/offset"), ("PUT", f"/api/tracks/{t}/lyrics"), ("POST", f"/api/tracks/{t}/lyrics/upload"),
-              ("DELETE", f"/api/tracks/{t}/lyrics/manual"), ("POST", f"/api/tracks/{t}/lyrics/restore"),
+              ("POST", f"/api/tracks/{t}/lyrics/upload"),
               ("GET", "/api/users"), ("POST", "/api/users"), ("PUT", "/api/users/1/password"), ("DELETE", "/api/users/1")]
     for method, path in denied:
         assert m.request(method, path, json={}).status_code == 403, path
@@ -240,6 +239,91 @@ def test_records_are_per_person(env):
     assert admin.get("/api/settings").json()["ui"]["theme"] == "dark" and m.get("/api/settings").json()["ui"]["theme"] == "light"
     # プロパティの再生回数も本人の分
     assert admin.get(f"/api/tracks/{a}/meta").json()["file"]["plays"] == 1 and m.get(f"/api/tracks/{a}/meta").json()["file"]["plays"] == 0
+
+
+def test_lyric_edits_are_personal(env):
+    app, cfg, _ = env
+    admin = setup_admin(app, cfg)
+    wife = add_member(app, admin, "妻", "192.168.0.11")
+    kid = add_member(app, admin, "子", "192.168.0.12")
+    t = ids(admin)[0]
+    url = f"/api/tracks/{t}/lyrics"
+    first = lambda d: d["lyrics"]["layers"][0]["lines"][0]
+    # 管理者の編集は全員の既定
+    assert admin.put(url, json={"text": "[00:01.00]みんなの歌詞"}).status_code == 200
+    assert first(wife.get(url).json())["start"] == 1000
+    # 家族の編集はその人だけ。全員共通の歌詞は変わらない
+    r = wife.put(url, json={"text": "[00:05.00]みんなの歌詞", "offsetMs": 0}).json()
+    assert first(r)["start"] == 5000 and r["personal"] is True and r["lyrics"]["source"] == "personal"
+    assert first(wife.get(url).json())["start"] == 5000
+    assert first(admin.get(url).json())["start"] == 1000 and first(kid.get(url).json())["start"] == 1000
+    assert kid.get(url).json()["personal"] is False
+    # ずれも同じ
+    assert wife.put(url + "/offset", json={"offsetMs": 700}).json()["offsetMs"] == 700
+    assert admin.get(url).json()["offsetMs"] == 0 and kid.get(url).json()["offsetMs"] == 0
+    assert kid.put(url + "/offset", json={"offsetMs": -300}).json()["offsetMs"] == -300
+    assert wife.get(url).json()["offsetMs"] == 700
+    # 管理者のずれの変更は、自分のずれを持たない人にだけ届く
+    admin.put(url + "/offset", json={"offsetMs": 100})
+    third = add_member(app, admin, "孫", "192.168.0.13")
+    assert third.get(url).json()["offsetMs"] == 100 and wife.get(url).json()["offsetMs"] == 700
+    # 管理者が全員の歌詞を直しても、自分の修正が優先
+    admin.put(url, json={"text": "[00:02.00]直した歌詞"})
+    assert first(wife.get(url).json())["start"] == 5000 and first(kid.get(url).json())["start"] == 2000
+    # 前の版に戻す・自分の修正を消す
+    wife.put(url, json={"text": "[00:09.00]二回目"})
+    assert first(wife.get(url).json())["start"] == 9000 and wife.get(url).json()["hasPrev"]
+    assert first(wife.post(url + "/restore").json())["start"] == 5000
+    assert first(admin.get(url).json())["start"] == 2000                              # 管理者の版には触らない
+    r = wife.delete(url + "/manual").json()
+    assert r["personal"] is False and first(r)["start"] == 2000 and r["offsetMs"] == 100
+    assert first(wife.post(url + "/restore").json())["start"] == 5000                 # 消したのも戻せる
+    # 管理者の前の版は、家族の操作では動かない
+    assert first(admin.post(url + "/restore").json())["start"] == 1000
+    assert kid.post(url + "/restore").status_code == 409
+    assert kid.put(url, json={"text": "x" * 2_000_001}).status_code == 413
+    # アカウントを消すと、その人の修正も消える
+    uid = next(u["id"] for u in admin.get("/api/users").json() if u["name"] == "妻")
+    assert admin.delete(f"/api/users/{uid}").status_code == 200
+    assert sqlite3.connect(cfg.db_path).execute("SELECT COUNT(*) FROM lyrics_personal WHERE user_id=?", (uid,)).fetchone()[0] == 0
+
+
+def test_family_first_play_fetches_lyrics_and_saves_for_everyone(env):
+    from otokura.lyrics.lrc import parse_lrc
+    app, cfg, _ = env
+    admin = setup_admin(app, cfg)
+    wife = add_member(app, admin, "妻", "192.168.0.11")
+    kid = add_member(app, admin, "子", "192.168.0.12")
+    t = ids(admin)[0]
+    url = f"/api/tracks/{t}/lyrics"
+    calls = []
+
+    class FakeLrclib:
+        def fetch(self, q):
+            calls.append(q.title)
+            return parse_lrc("[00:01.00]取ってきた歌詞", source="lrclib")
+    app.state.lyrics.lrclib = FakeLrclib()
+    d = wife.get(url).json()
+    assert not d["available"] and d["canFetch"] and not d["lrclibMiss"]              # 画面はこの条件で自動で取りに行く
+    r = wife.post(url + "/fetch")
+    assert r.status_code == 200 and r.json()["available"] and r.json()["lyrics"]["source"] == "lrclib"
+    # NAS(DB)に保存され、全員で共有。ほかの人はもう取りに行かない
+    assert len(calls) == 1
+    for c in (kid, admin):
+        got = c.get(url).json()
+        assert got["available"] and got["lyrics"]["layers"][0]["lines"][0]["text"] == "取ってきた歌詞"
+    assert len(calls) == 1
+    row = sqlite3.connect(cfg.db_path).execute("SELECT lrclib_body FROM lyrics_user WHERE track_id=?", (str(t),)).fetchone()
+    assert row and "取ってきた歌詞" in row[0]
+
+    # 見つからなかった曲は記録され、自動では取りに行かない状態になる
+    class Miss:
+        def fetch(self, q):
+            return None
+    b = ids(admin)[1]
+    app.state.lyrics.lrclib = Miss()
+    assert wife.post(f"/api/tracks/{b}/lyrics/fetch").json()["lrclibMiss"] is True
+    assert kid.get(f"/api/tracks/{b}/lyrics").json()["lrclibMiss"] is True
 
 
 def test_dlna_for_family_only_from_home(env):

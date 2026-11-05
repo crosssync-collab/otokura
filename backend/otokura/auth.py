@@ -34,6 +34,7 @@ _TAILNET = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:11
 # 家族に許す書き込み。ここに無いものは管理者だけ
 MEMBER_WRITES = [re.compile(p) for p in (
     r"/api/tracks/\d+/(played|skipped|stats|prepare|loudness|lyrics/fetch)",
+    r"/api/tracks/\d+/lyrics(/offset|/manual|/restore)?",    # 歌詞の編集はその人だけの修正になる(lyrics/api.py)
     r"/api/playlists(/\d+)?",
     r"/api/settings",
     r"/api/dlna/[^/]+/(load|play|pause|stop|seek|volume)",
@@ -142,6 +143,7 @@ class Auth:
             c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
             c.execute("DELETE FROM track_stats WHERE user_id=?", (uid,))
             c.execute("DELETE FROM user_settings WHERE user_id=?", (uid,))
+            c.execute("DELETE FROM lyrics_personal WHERE user_id=?", (uid,))
             c.execute("DELETE FROM playlists WHERE user_id=?", (uid,))
             c.execute("DELETE FROM users WHERE id=?", (uid,))
             c.commit()
