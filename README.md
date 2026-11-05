@@ -40,7 +40,7 @@ docker compose logs -f  # 「スキャン完了」が出れば準備完了
 
 ブラウザで `http://<NAS のアドレス>:8686/` を開きます。最初に管理者を登録します。確認コードはデータフォルダの `setup-code.txt` にあります(`cat data/setup-code.txt`)。家族のアカウントは設定の「アカウント」で作ります。家族向けの初期設定と使い方は `/manual.html`(設定の「使い方」、ログイン画面からも開けます)。
 
-外から使うときは Tailscale Funnel で公開できます(`sudo tailscale funnel --bg --https=8443 8686`)。止めるときは `sudo tailscale funnel --https=8443 off`。
+遠方の家族は Tailscale のノード共有でつなぎます(`sudo tailscale serve --bg --https=8443 8686` で配り、管理画面で NAS を共有。共有相手は 8443 だけに制限する)。Funnel での公開は、普通の FLAC でも途切れたので使っていません(`sudo tailscale funnel --https=8443 off` で止める)。
 
 ログイン: 管理者はパスワードだけでは入れません。最初に指紋・PIN(パスキー)を登録します(`https` のアドレスで開いたときに使えます)。登録できない端末には予備として認証アプリ(Google Authenticator など)を使えます。家族はどちらも任意で、管理者が作ったパスワードを最初のログインで本人が変えます。テレビはログイン画面の「スマホで承認」で、スマホの指紋で承認してログインします。
 
