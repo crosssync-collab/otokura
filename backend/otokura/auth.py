@@ -29,8 +29,10 @@ log = logging.getLogger("otokura.auth")
 COOKIE = "otokura_s"
 SESSION_S = 365 * 86400
 LINK_S = 24 * 3600
-MIN_PASSWORD = 8
-MAX_FAILS = 5
+MIN_PASSWORD = 10
+MAX_FAILS = 5          # 同じ名前 + 同じ接続元
+MAX_NAME_FAILS = 20    # 同じ名前(接続元を変えながらの攻撃)
+MAX_IP_FAILS = 20      # 同じ接続元(名前を変えながらの攻撃)
 SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}
 RESET_S = 15 * 60
 _TAILNET = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
@@ -66,7 +68,10 @@ _DUMMY = hash_password("otokura")     # いない名前でも同じ時間をか�
 
 
 def is_home(request: Request) -> bool:
-    """家の中のネットワークからの接続か。Tailscale・転送元が不明な接続は外として扱う。"""
+    """家の中のネットワークからの接続か。Tailscale・転送元が不明な接続は外として扱う。
+    Tailscale の転送(Funnel を含む)を通るとヘッダーが付く。その中身は外からも書けるので信じない。"""
+    if request.headers.get("x-forwarded-for"):
+        return False
     try:
         a = ipaddress.ip_address(request.client.host)
     except (AttributeError, ValueError):
@@ -92,6 +97,7 @@ class Auth:
         self.db, self.data_dir, self.enabled = db, Path(data_dir), enabled
         self._fails: dict[tuple[str, str], tuple[int, float]] = {}
         self._lock = threading.Lock()
+        self._hashing = threading.BoundedSemaphore(2)    # パスワードの照合は重いので同時に 2 つまで(大量の試行で NAS を止めない)
         if enabled and not self.has_users():
             self._ensure_setup_code()
 
@@ -152,8 +158,8 @@ class Auth:
     @staticmethod
     def _check(name: str, password: str) -> str:
         name = str(name or "").strip()
-        if not name or len(name) > 40:
-            raise HTTPException(422, "名前は 1〜40 文字にしてください")
+        if not name or len(name) > 80:
+            raise HTTPException(422, "ユーザー名は 1〜80 文字にしてください")
         if len(str(password or "")) < MIN_PASSWORD:
             raise HTTPException(422, f"パスワードは {MIN_PASSWORD} 文字以上にしてください")
         return name
@@ -161,8 +167,8 @@ class Auth:
     def create_user(self, name: str, password: str, role: str = "member", uid: int | None = None) -> int:
         name = self._check(name, password)
         with self.db.write_lock:
-            if self.db.one("SELECT 1 FROM users WHERE name=?", (name,)):
-                raise HTTPException(409, "同じ名前のアカウントがあります")
+            if self.db.one("SELECT 1 FROM users WHERE name=? COLLATE NOCASE", (name,)):
+                raise HTTPException(409, "同じユーザー名のアカウントがあります")
             cur = self.db.conn.execute("INSERT INTO users(id,name,pw_hash,role,created_at) VALUES(?,?,?,?,?)",
                                        (uid, name, hash_password(password), role, time.time()))
             self.db.conn.commit()
@@ -193,30 +199,42 @@ class Auth:
     def _token_hash(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-    def _throttled(self, key: tuple[str, str]) -> float:
+    def _throttled(self, key: tuple[str, str], limit: int = MAX_FAILS) -> float:
         with self._lock:
             n, until = self._fails.get(key, (0, 0.0))
-        return max(0.0, until - time.time()) if n >= MAX_FAILS else 0.0
+        return max(0.0, until - time.time()) if n >= limit else 0.0
 
-    def _failed(self, key: tuple[str, str]) -> None:
+    def _failed(self, key: tuple[str, str], limit: int = MAX_FAILS) -> None:
         with self._lock:
             n = self._fails.get(key, (0, 0.0))[0] + 1
-            wait = min(900, 30 * 2 ** max(0, n - MAX_FAILS)) if n >= MAX_FAILS else 0
+            wait = min(900, 30 * 2 ** max(0, n - limit)) if n >= limit else 0
             self._fails[key] = (n, time.time() + wait)
+            if len(self._fails) > 5000:      # 大量の名前を試されても記憶を増やし続けない
+                now = time.time()
+                self._fails = {k: v for k, v in self._fails.items() if v[1] > now}
 
     def login(self, request: Request, response: Response, name: str, password: str) -> dict:
         name = str(name or "").strip()
-        key = (name.casefold(), request.client.host if request.client else "")
-        wait = self._throttled(key)
+        ip = request.client.host if request.client else ""
+        key, by_name, by_ip = (name.casefold(), ip), (name.casefold(), "*"), ("*", ip)
+        wait = max(self._throttled(key), self._throttled(by_name, MAX_NAME_FAILS), self._throttled(by_ip, MAX_IP_FAILS))
         if wait:
             raise HTTPException(429, f"続けて間違えたので、{int(wait) + 1} 秒待ってください")
-        row = self.db.one("SELECT * FROM users WHERE name=?", (name,))
-        ok = check_password(str(password or ""), row["pw_hash"] if row else _DUMMY)
+        if not self._hashing.acquire(blocking=False):
+            raise HTTPException(429, "混み合っています。少し待ってからもう一度試してください")
+        try:
+            row = self.db.one("SELECT * FROM users WHERE name=? COLLATE NOCASE", (name,))
+            ok = check_password(str(password or ""), row["pw_hash"] if row else _DUMMY)
+        finally:
+            self._hashing.release()
         if not row or not ok:
             self._failed(key)
-            raise HTTPException(401, "名前かパスワードが違います")
+            self._failed(by_name, MAX_NAME_FAILS)
+            self._failed(by_ip, MAX_IP_FAILS)
+            raise HTTPException(401, "ユーザー名かパスワードが違います")
         with self._lock:
-            self._fails.pop(key, None)
+            for k in (key, by_name, by_ip):
+                self._fails.pop(k, None)
         self.start_session(request, response, row["id"])
         return self.public(row)
 
@@ -299,7 +317,7 @@ class Auth:
         if user["role"] == "admin":
             return
         if path.startswith("/api/dlna/") and not is_home(request):
-            raise HTTPException(403, "DLNA は家の中のアドレスから開いたときに使えます")
+            raise HTTPException(403, "DLNA は実家のアドレスから開いたときに使えます")
         if request.method in ("GET", "HEAD"):
             allowed = not any(p.fullmatch(path) for p in ADMIN_READS)
         else:

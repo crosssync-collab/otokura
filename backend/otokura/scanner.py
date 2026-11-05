@@ -105,6 +105,7 @@ class Scanner:
                         c.execute("UPDATE albums SET art=NULL WHERE id=?", (aid,))
                         self._art(aid, album_key(src.id, info, Path(rels)), info, p)
                     tid = self._upsert_track(src, rels, p.stat(), info, aid, old)
+                    c.commit()      # 書き込みを開いたまま次へ進まない(下の _scan の注を参照)
                 touched.add(aid)
                 if old and old["album_id"]:
                     touched.add(old["album_id"])
@@ -197,9 +198,12 @@ class Scanner:
                         st.errors.append(f"{src.name}/{rels}: {e}")
                     st.done += 1
                     continue
+                # 1 曲ごとに確定する。書き込みを開いたまま write_lock を手放すと、ログインや再生記録の書き込みが
+                # write_lock を握って DB の空きを待ち、こちらは write_lock を待つ形で 30 秒止まる(database is locked)
                 with self.db.write_lock:
                     aid = self._album(src, info, rel, p)
                     tid = self._upsert_track(src, rels, stt, info, aid, old)
+                    c.commit()
                 touched.add(aid)
                 if old:
                     st.updated += 1
@@ -271,6 +275,7 @@ class Scanner:
             with self.db.write_lock:
                 aid = self._album(src, ti, rel, p)
                 tid = self._upsert_track(src, v, stamp, ti, aid, old, (t.start_ms, t.end_ms))
+                self.db.conn.commit()
             touched.add(aid)
             if old and old["album_id"]:
                 touched.add(old["album_id"])

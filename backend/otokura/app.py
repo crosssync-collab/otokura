@@ -106,7 +106,6 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     # ---------- ログイン・アカウント ----------
     def auth_state(request: Request, user) -> dict:
         return {"needsSetup": cfg.auth and not auth.has_users(), "user": user,
-                "names": [r["name"] for r in db.q("SELECT name FROM users ORDER BY id")] if not user else [],
                 "canDlna": bool(user and (user["role"] == "admin" or is_home(request)))}
 
     @app.get("/api/auth/state")

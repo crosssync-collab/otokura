@@ -188,6 +188,7 @@ class Database:
             c = sqlite3.connect(self.path, timeout=30, check_same_thread=False)
             c.row_factory = sqlite3.Row
             c.execute("PRAGMA foreign_keys=ON")
+            c.execute("PRAGMA synchronous=NORMAL")     # WAL なので安全。スキャンの 1 曲ごとの確定で毎回ディスクを待たない
             self._local.conn = c
         return c
 

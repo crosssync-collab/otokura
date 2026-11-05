@@ -72,7 +72,7 @@ def test_setup_needs_the_code_and_only_works_once(env):
     assert not code_file.exists()
     assert client(app).post("/api/auth/setup", json={"code": "", "name": "y", "password": PW}).status_code == 409
     st = client(app).get("/api/auth/state").json()
-    assert not st["needsSetup"] and st["names"] == ["cross"] and st["user"] is None
+    assert not st["needsSetup"] and st["user"] is None and "names" not in st          # 公開するので、アカウントの名前は見せない
 
 
 def test_password_is_hashed_and_login_is_rate_limited(env):
@@ -87,6 +87,61 @@ def test_password_is_hashed_and_login_is_rate_limited(env):
     assert c.post("/api/auth/login", json={"name": "cross", "password": PW}).status_code == 429
     assert client(app, "192.168.0.51").post("/api/auth/login", json={"name": "cross", "password": PW}).status_code == 200
     assert client(app, "192.168.0.52").post("/api/auth/login", json={"name": "いない人", "password": PW}).status_code == 401
+
+
+def test_public_hardening(env):
+    from otokura import auth as A
+    app, cfg, _ = env
+    admin = setup_admin(app, cfg)
+    # メールアドレスをユーザー名にできる。大文字小文字は区別しない
+    assert admin.post("/api/users", json={"name": "Hana@Example.com", "password": PW}).status_code == 200
+    assert admin.post("/api/users", json={"name": "hana@example.com", "password": PW}).status_code == 409
+    assert client(app, "192.168.0.70").post("/api/auth/login", json={"name": "hana@EXAMPLE.com", "password": PW}).status_code == 200
+    # 新しいパスワードは 10 文字以上
+    assert admin.post("/api/users", json={"name": "short", "password": "123456789"}).status_code == 422
+    # 接続元を変えながら 1 つのアカウントを狙っても止まる
+    codes = [client(app, f"203.0.113.{i}").post("/api/auth/login", json={"name": "cross", "password": "bad"}).status_code for i in range(A.MAX_NAME_FAILS + 1)]
+    assert codes[:A.MAX_NAME_FAILS] == [401] * A.MAX_NAME_FAILS and codes[-1] == 429
+    # 1 つの接続元から名前を変えながら試しても止まる
+    c = client(app, "203.0.113.200")
+    codes = [c.post("/api/auth/login", json={"name": f"user{i}", "password": "bad"}).status_code for i in range(A.MAX_IP_FAILS + 1)]
+    assert codes[-1] == 429 and codes[0] == 401
+
+
+def test_home_check_cannot_be_spoofed_through_the_proxy(env):
+    app, cfg, _ = env
+    admin = setup_admin(app, cfg)
+    m = add_member(app, admin, "妻", "192.168.0.11")
+    assert m.get("/api/auth/state").json()["canDlna"] is True
+    # Tailscale の転送を通った接続には X-Forwarded-For が付く。中身が家のアドレスでも家の中とみなさない
+    h = {"X-Forwarded-For": "192.168.0.5"}
+    assert m.get("/api/auth/state", headers=h).json()["canDlna"] is False
+    assert m.get("/api/dlna/devices", headers=h).status_code == 403
+
+
+def test_login_and_records_do_not_wait_for_a_running_scan(env, monkeypatch):
+    # スキャンが書き込みを開いたまま次の曲を読んでいる間に、ログインや再生記録の書き込みが来ても待たされない
+    import threading
+    from otokura import metadata
+    app, cfg, _ = env
+    admin = setup_admin(app, cfg)
+    t = ids(admin)[0]
+    real = metadata.read
+
+    def slow(*a, **k):
+        time.sleep(1.5)
+        return real(*a, **k)
+    monkeypatch.setattr(metadata, "read", slow)
+    th = threading.Thread(target=lambda: app.state.scanner.run(full=True))
+    th.start()
+    time.sleep(2.2)         # 1 曲目を書いたあと、2 曲目を読んでいるところ
+    t0 = time.time()
+    assert admin.post(f"/api/tracks/{t}/played").status_code == 200
+    assert client(app).post("/api/auth/login", json={"name": "cross", "password": PW}).status_code == 200
+    took = time.time() - t0
+    th.join(30)
+    assert took < 5, f"{took:.1f} 秒待たされた"
+    assert not app.state.scanner.state.errors
 
 
 def test_session_cookie_flags_and_logout(env):
@@ -417,7 +472,7 @@ def test_user_management(env):
     assert all("pw_hash" not in u for u in us)
     mid = next(u["id"] for u in us if u["name"] == "妻")
     assert admin.post("/api/users", json={"name": "妻", "password": PW}).status_code == 409
-    assert admin.post("/api/users", json={"name": "子", "password": "short"}).status_code == 422
+    assert admin.post("/api/users", json={"name": "子", "password": "too short"}).status_code == 422
     # 自分のパスワード変更: 今のパスワードが要る。他の端末はログアウトする
     other = client(app, "192.168.0.12")
     other.post("/api/auth/login", json={"name": "妻", "password": PW})
