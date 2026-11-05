@@ -398,15 +398,25 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             tc.prepare(p, codec, cut=cut)
         return {"needed": True, "ready": ready}
 
+    def cached_file(request: Request, p: Path, media: str, cache: str):
+        """期限が切れても、変わっていなければ送り直さない(遠くの回線で画像を何度も取らないように)。"""
+        st = p.stat()
+        tag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+        headers = {"Cache-Control": cache, "ETag": tag}
+        if request.headers.get("if-none-match") == tag:
+            return Response(status_code=304, headers=headers)
+        return FileResponse(p, media_type=media, headers=headers)
+
     @app.get("/api/art/{album_id}")
-    def album_art(album_id: int, size: int = 300):
+    def album_art(album_id: int, request: Request, size: int = 300, v: str = ""):
         r = db.one("SELECT art FROM albums WHERE id=?", (album_id,))
         if r is None or not r["art"]:
             raise HTTPException(404, "カバー画像がありません")
         p = art.thumb_path(cfg.art_dir, r["art"], size)
         if not p.is_file():
             raise HTTPException(404, "カバー画像がありません")
-        return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+        # v はカバーの中身から作った名前なので、同じ URL の中身は変わらない
+        return cached_file(request, p, "image/jpeg", "private, max-age=31536000, immutable" if v else "private, max-age=86400")
 
     # ---------- Web から取るアーティスト画像・アルバム情報 ----------
     def need_webinfo() -> WebInfo:
@@ -738,11 +748,11 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
 
     # ミックスのジャケット(web/mix/*.jpg)
     @app.get("/mix/{name}", include_in_schema=False)
-    def mix_art(name: str):
+    def mix_art(name: str, request: Request):
         p = cfg.web_dir / "mix" / name if cfg.web_dir and re.fullmatch(r"[a-z0-9]+\.jpg", name) else None
         if not p or not p.is_file():
             raise HTTPException(404)
-        return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+        return cached_file(request, p, "image/jpeg", "public, max-age=604800")
 
     @app.get("/{name}", include_in_schema=False)
     def web_file(name: str):

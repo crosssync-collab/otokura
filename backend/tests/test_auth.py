@@ -555,3 +555,46 @@ def test_old_database_moves_to_first_admin(tmp_path):
     assert login_admin(c2, cfg, admin).status_code == 200
     j = c2.get("/api/library").json()
     assert dict(zip(j["trackColumns"], j["tracks"][0]))["plays"] == 7
+
+
+def test_home_tiles_are_not_fetched_again_every_launch(tmp_path):
+    from otokura.app import create_app
+    from otokura.config import Config, Source
+    (tmp_path / "web" / "mix").mkdir(parents=True)
+    (tmp_path / "web" / "mix" / "personal.jpg").write_bytes(b"jpeg")
+    (tmp_path / "m").mkdir()
+    cfg = Config(sources=[Source("m", "M", tmp_path / "m")], data_dir=tmp_path / "data", scan_at=None, scan_on_start=False,
+                 lrclib=False, webinfo=False, auth=True, web_dir=tmp_path / "web")
+    c = client(create_app(cfg, start_background=False))
+    r = c.get("/mix/personal.jpg")
+    assert r.status_code == 200
+    assert "max-age=604800" in r.headers["cache-control"] and "no-cache" not in r.headers["cache-control"]
+    tag = r.headers["etag"]
+    again = c.get("/mix/personal.jpg", headers={"If-None-Match": tag})
+    assert again.status_code == 304 and again.content == b""             # 期限が切れても、変わっていなければ送り直さない
+    assert c.get("/mix/personal.jpg", headers={"If-None-Match": '"other"'}).status_code == 200
+
+
+def test_album_art_with_a_version_is_kept_and_stays_private(env):
+    app, cfg, tmp = env
+    from mutagen.flac import FLAC, Picture
+    f = FLAC(tmp / "m" / "a" / "01 one.flac")
+    p = Picture()
+    p.type, p.mime, p.data = 3, "image/jpeg", (tmp / "pic.jpg").read_bytes() if (tmp / "pic.jpg").exists() else make_jpeg(tmp / "pic.jpg")
+    f.add_picture(p)
+    f.save()
+    app.state.scanner.run(full=True)
+    admin = setup_admin(app, cfg)
+    aid, v = next((r["id"], r["art"]) for r in map(lambda row, cols=admin.get("/api/library").json()["albumColumns"]: dict(zip(cols, row)), admin.get("/api/library").json()["albums"]) if r["art"])
+    r = admin.get(f"/api/art/{aid}?size=300&v={v}")
+    assert r.status_code == 200
+    cc = r.headers["cache-control"]
+    assert "private" in cc and "immutable" in cc and "public" not in cc
+    assert "immutable" not in admin.get(f"/api/art/{aid}?size=300").headers["cache-control"]    # 版の無い URL は長く持たない
+    assert client(app, "192.168.0.99").get(f"/api/art/{aid}?size=300&v={v}").status_code == 401   # キャッシュの指定で鍵は緩めない
+
+
+def make_jpeg(path):
+    import subprocess
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=red:s=64x64:d=1", "-frames:v", "1", str(path)], check=True)
+    return path.read_bytes()
