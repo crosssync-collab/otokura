@@ -2666,9 +2666,22 @@ async function localInfo(file,rel,src){
   if(t.picture&&t.picture.data){info.art=src+'|'+(info.albumartist||info.artist)+'|'+info.album;await localSaveArt(info.art,t.picture);}
   return info;
 }
-// フォルダ(ハンドル)の中の音楽ファイルを全部たどる
+// 曲と同じフォルダ・同じ名前の歌詞ファイル。優先順は NAS の曲と同じ(時刻付きが先。同じなら .ttml > .lrc > タグ > .txt)
+const LYRIC_EXT={ttml:0,lrc:1,txt:4};
+const fileExt=n=>(n.split('.').pop()||'').toLowerCase();
+const sideKey=rel=>rel.replace(/\.[^./]+$/,'').toLowerCase();
+// 歌詞ファイルの文字コード: BOM → UTF-8 → Shift_JIS(NAS の曲と同じ順)
+function decodeLyr(buf){
+  const u=new Uint8Array(buf);
+  if(u[0]===0xef&&u[1]===0xbb&&u[2]===0xbf)return new TextDecoder('utf-8').decode(u.subarray(3));
+  if(u[0]===0xff&&u[1]===0xfe)return new TextDecoder('utf-16le').decode(u.subarray(2));
+  if(u[0]===0xfe&&u[1]===0xff)return new TextDecoder('utf-16be').decode(u.subarray(2));
+  try{return new TextDecoder('utf-8',{fatal:true}).decode(u);}catch(e){}
+  try{return new TextDecoder('shift_jis').decode(u);}catch(e){return new TextDecoder('latin1').decode(u);}
+}
+// フォルダ(ハンドル)の中の音楽ファイルと歌詞ファイルを全部たどる
 async function* walkDir(h,pre=''){for await(const [n,e] of h.entries()){if(n.startsWith('.')||n.startsWith('@'))continue;
-  if(e.kind==='directory')yield* walkDir(e,pre+n+'/');else if(LOCAL_EXT[(n.split('.').pop()||'').toLowerCase()])yield [pre+n,e];}}
+  if(e.kind==='directory')yield* walkDir(e,pre+n+'/');else if(LOCAL_EXT[fileExt(n)]||LYRIC_EXT[fileExt(n)]!=null)yield [pre+n,e];}}
 async function localPermOk(src,ask){
   if(src.kind!=='dir')return true;
   if(localPerm[src.id])return true;
@@ -2683,7 +2696,9 @@ async function localScanDir(src){
   if(!await localPermOk(src,true)){toast('フォルダを読む許可がありません');return;}
   const old=new Map((await LDB.all('tracks')).filter(t=>t.src===src.id).map(t=>[t.rel,t])),seen=new Set();let n=0,add=0,buf=[],shown=Date.now();
   const flush=async()=>{if(buf.length){await LDB.putAll('tracks',buf);buf=[];}};
+  const side=new Map();
   for await(const [rel,fh] of walkDir(src.handle)){
+    if(LYRIC_EXT[fileExt(rel)]!=null){const k=sideKey(rel),o=side.get(k)||{};o[fileExt(rel)]=rel;side.set(k,o);continue;}
     seen.add(rel);n++;localProgress(`「${src.name}」を読んでいます… ${n} 曲`);
     const f=await fh.getFile(),o=old.get(rel);
     if(o&&o.size===f.size&&o.mtime===f.lastModified)continue;
@@ -2693,8 +2708,11 @@ async function localScanDir(src){
   }
   await flush();
   await LDB.delWhere('tracks',t=>t.src===src.id&&!seen.has(t.rel));
+  // 歌詞ファイルだけ増えた・消えた曲も、ここで付け直す
+  const relink=(await LDB.all('tracks')).filter(t=>t.src===src.id).map(t=>[t,side.get(sideKey(t.rel))||null]).filter(([t,v])=>JSON.stringify(t.side||null)!==JSON.stringify(v)).map(([t,v])=>({...t,side:v}));
+  if(relink.length)await LDB.putKnown('tracks',relink);
   localProgress(null);
-  const r={n,add,removed:[...old.keys()].filter(x=>!seen.has(x)).length};
+  const r={n,add,removed:[...old.keys()].filter(x=>!seen.has(x)).length,lyrics:relink.length};
   if(add||r.removed)await localRebuild();
   localEnrichStart();
   return r;
@@ -2714,6 +2732,7 @@ async function localEnrichStart(){
       const work=async()=>{while(enrichQ.length){const t=enrichQ.shift();let info;
         try{info=await localInfo(await localFile({src:t.src,rel:t.rel,lid:t.id},false),t.rel,t.src);}
         catch(e){if(e&&e.denied){enrichQ=[];return;}info={...t,pending:false};}   // 読めない曲はファイル名のままにする
+        info.side=t.side||null;info.sideText=t.sideText||null;
         buf.push(info);localEnrichShow(info);done++;localProgress(`曲の情報を読んでいます… ${done} / ${total} 曲(このまま聴けます)`);
         if(buf.length>=20)await flush();}};
       await Promise.all(Array.from({length:ENRICH_WORKERS},work));
@@ -2745,7 +2764,11 @@ async function localAddDir(){
   try{const r=await localScanDir(src);localAfter(`「${src.name}」から ${r.n} 曲を追加しました`);}catch(e){localProgress(null);toast('フォルダを読めませんでした: '+e.message);}
 }
 async function localImport(files){
-  files=[...files].filter(f=>LOCAL_EXT[(f.name.split('.').pop()||'').toLowerCase()]);
+  const all=[...files],texts=new Map();
+  for(const f of all.filter(f=>LYRIC_EXT[fileExt(f.name)]!=null)){   // 歌詞ファイルは中身を一緒に保存する
+    const k=sideKey((f.webkitRelativePath||f.name).replace(/^\/+/,'')),o=texts.get(k)||{};
+    try{o[fileExt(f.name)]=decodeLyr(await f.arrayBuffer());texts.set(k,o);}catch(e){}}
+  files=all.filter(f=>LOCAL_EXT[fileExt(f.name)]);
   if(!files.length){toast('取り込める音楽ファイルがありませんでした');return;}
   if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
   let src=(await LDB.all('sources')).find(x=>x.kind==='copy');
@@ -2753,7 +2776,7 @@ async function localImport(files){
   let n=0;
   for(const f of files){localProgress(`取り込んでいます… ${n+1} / ${files.length} 曲`);
     const rel=(f.webkitRelativePath||f.name).replace(/^\/+/,'');
-    try{await LDB.put('files',{id:src.id+'/'+rel,blob:f});await LDB.put('tracks',localStub(f,rel,src.id));n++;}
+    try{await LDB.put('files',{id:src.id+'/'+rel,blob:f});await LDB.put('tracks',{...localStub(f,rel,src.id),sideText:texts.get(sideKey(rel))||null});n++;}
     catch(e){localProgress(null);toast('取り込めませんでした(端末の空き容量を確認してください): '+e.message);break;}}
   localProgress(null);await localAfter(`${n} 曲を取り込みました`);localEnrichStart();
 }
@@ -2823,8 +2846,19 @@ async function localLyrics(s,method,path,body){
   if(method==='DELETE'&&path==='/manual'){keep();m.text=null;await LDB.put('lyrics',m);}
   if(method==='POST'&&path==='/restore'){if(!m||!m.prev)throw new Error('戻せる版がありません');m.text=m.prev.text;setOff(m.prev.off);m.prev=null;await LDB.put('lyrics',m);}
   const t=await LDB.get('tracks',s.lid),ms=s.d*1000;
-  const ly=m&&m.text?parseLyricsText(m.text,'manual',ms):t&&t.lyrics?parseLyricsText(t.lyrics,'tag:text',ms):null;
+  const ly=m&&m.text?parseLyricsText(m.text,'manual',ms):t?await localBestLyrics(t,ms):null;
   return {trackId:s.dbid,available:!!ly,lyrics:ly,offsetMs:off(),canFetch:false,lrclibMiss:false,hasPrev:!!(m&&m.prev)};
+}
+// 曲のタグと歌詞ファイルから一番良いものを選ぶ
+async function localBestLyrics(t,ms){
+  const c=[],add=(text,src,pri)=>{if(!text)return;const ly=parseLyricsText(text,src,ms);if(ly.layers[0].lines.some(l=>l.text))c.push([ly,pri]);};
+  if(t.lyrics){const ly=parseLyricsText(t.lyrics,'tag:text',ms);add(t.lyrics,ly.synced?'tag:lrc':'tag:text',ly.synced?2:3);}
+  for(const [ext,text] of Object.entries(t.sideText||{}))add(text,'sidecar:'+ext,LYRIC_EXT[ext]);
+  const src=LSRC.find(x=>x.id===t.src);
+  for(const [ext,rel] of Object.entries(t.side||{})){
+    try{const f=await localFile({src:t.src,rel,lid:''},false);add(decodeLyr(await f.arrayBuffer()),'sidecar:'+ext,LYRIC_EXT[ext]);}catch(e){}}
+  c.sort((a,b)=>(!a[0].synced-!b[0].synced)||(!a[0].hasWords-!b[0].hasWords)||(a[1]-b[1]));
+  return c.length?c[0][0]:null;
 }
 function localProvidersHtml(){
   const cnt=id=>SONGS.filter(x=>x.src===id).length;
@@ -2839,8 +2873,8 @@ function localProvidersHtml(){
       <button class="btn ghost sm" data-act="localImportDir">${ico('folder',18)}フォルダごと取り込む</button>
       <small class="muted" id="localbusy" style="flex-basis:100%">${esc(localBusy||'')}</small></div></div>
     <p class="muted" style="font-size:13px;margin:10px 4px">この端末の曲は、この端末だけで再生します(NAS には送りません。Cast・プレイリスト・タグの編集は使えません)。
-    ${localCanDir()?'「フォルダを追加」はコピーせずそのまま読むので、端末の容量を使いません。曲を足したら「読み直す」を押してください。開き直したあとは、最初の再生で許可を聞かれることがあります。':''}「取り込む」は曲をこの端末のブラウザに保存するので、ネットが無くても再生できますが、その分の容量を使います。</p>
-    <input type="file" id="localfiles" multiple accept="audio/*,.flac,.m4a,.opus,.ogg" hidden><input type="file" id="localdir" webkitdirectory hidden>`;
+    ${localCanDir()?'「フォルダを追加」はコピーせずそのまま読むので、端末の容量を使いません。曲を足したら「読み直す」を押してください。開き直したあとは、最初の再生で許可を聞かれることがあります。':''}曲と同じフォルダに同じ名前の歌詞ファイル(.lrc・.ttml・.txt)があれば、歌詞も表示します。取り込むときは歌詞ファイルも一緒に選んでください。「取り込む」は曲をこの端末のブラウザに保存するので、ネットが無くても再生できますが、その分の容量を使います。</p>
+    <input type="file" id="localfiles" multiple accept="audio/*,.flac,.m4a,.opus,.ogg,.lrc,.ttml,.txt" hidden><input type="file" id="localdir" webkitdirectory hidden>`;
 }
 
 /* --- スキャン・サーバー情報 --- */
