@@ -164,6 +164,7 @@ OTOKURA_SOURCES=Lossless=/music/Lossless,1.Lossy=/music/1.Lossy
 - カバーは 1 辺 1000px までに縮めて保存し、URL は画面に出すときに作る
 - 歌詞ファイルは NAS の曲と同じ決まり(同じフォルダ・同じ名前の .ttml / .lrc / .txt。時刻付きが先、同じなら .ttml > .lrc > タグ > .txt。文字コードは BOM → UTF-8 → Shift_JIS)。フォルダの曲はファイルの場所だけ覚えて開くたびに読み、取り込んだ曲は中身を一緒に保存する
 - 端末の曲を作り直すときは NAS の一覧を取り直さない(`localRebuild`)
+- 長い一覧(ライブラリの曲・アルバム・アーティスト)は先頭 60 件だけ作り、下へ近づくと続きを足す(`chunk` / `lazyMore`、IntersectionObserver)。1.8 万曲で曲タブは 27 万要素・CPU 1/6 で 30 秒かかっていた。名前順は `Intl.Collator`
 - 許可は保存したハンドルに `queryPermission` で聞く。求められるのは操作のあとだけなので、裏の読み取りでは求めず、許可が出るまで待つ
 
 ## 歌詞と並べるジャケット
