@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 
+import hashlib
 import json
 import logging
 import platform
@@ -47,7 +48,7 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     auth = Auth(db, cfg.data_dir, cfg.auth)
     app = FastAPI(title="音蔵", version=__version__, docs_url=None, redoc_url=None, openapi_url=None, dependencies=[Depends(auth.guard)])
     app.state.auth = auth
-    app.add_middleware(GZipMiddleware, minimum_size=2048)
+    app.add_middleware(GZipMiddleware, minimum_size=2048, compresslevel=6)   # 9 は 3 倍遅いのに、曲の一覧ではほとんど小さくならない
     app.state.cfg, app.state.db, app.state.scanner, app.state.lyrics, app.state.transcoder = cfg, db, scanner, lyrics, tc
     # 鳴らせる形式 = ブラウザがそのまま鳴らせるもの + ffmpeg で変換するもの
     def playable_codecs() -> set[str]:
@@ -108,8 +109,15 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         return {"needsSetup": cfg.auth and not auth.has_users(), "user": user,
                 "canDlna": bool(user and (user["role"] == "admin" or is_home(request)))}
 
+    seen_devices: set[tuple[str, str]] = set()
+
     @app.get("/api/auth/state")
     def auth_get(request: Request):
+        ua = request.headers.get("user-agent", "")[:300]
+        who = (request.client.host if request.client else "", ua)
+        if ua and who not in seen_devices and len(seen_devices) < 500:   # 古いブラウザの不具合を調べるため、端末ごとに 1 回だけ残す
+            seen_devices.add(who)
+            log.info("端末 %s: %s", *who)
         return auth_state(request, auth.user_of(request))
 
     @app.post("/api/auth/setup")
@@ -242,7 +250,9 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
     # ---------- ライブラリ ----------
     @app.get("/api/library")
     def library(request: Request):
-        """画面が起動時に読む一覧。配列は先頭の columns の順。"""
+        """画面が起動時に読む一覧。配列は先頭の columns の順。
+        変わっていなければ 304 で送り直さない(ETag は中身から作る)。1.8 万曲では汎用の変換(jsonable_encoder)が
+        0.5 秒かかるので、JSON は直接作る。"""
         ver = db.meta("library_version") or "0"
         albums = db.q("SELECT id,title,artist,year,genre,source,folder,art IS NOT NULL AS has_art,hue,added_at,art "
                       "FROM albums ORDER BY id")
@@ -254,9 +264,8 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "FROM tracks t LEFT JOIN track_stats s ON s.user_id=? AND s.source=t.source AND s.rel=t.rel "
             "LEFT JOIN loudness l ON l.source=t.source AND l.rel=t.rel AND l.mtime=t.mtime AND l.size=t.size "
             "ORDER BY t.album_id, COALESCE(t.disc_no,1), COALESCE(t.track_no,9999), t.rel", (uid_of(request),))
-        return {
+        body = {
             "version": ver,
-            "now": time.time(),
             "sources": [sources_out(request, s) for s in cfg.sources],
             "playable": sorted(playable_codecs()),
             "transcode": {c: transcode_target(c)[0] for c in sorted(TRANSCODE_CODECS)} if tc.available else {},
@@ -268,6 +277,12 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
             "tracks": [list(r) for r in tracks],
             "artistArt": {r["name"]: r["image"] for r in db.q("SELECT name, image FROM artist_info WHERE image IS NOT NULL")},
         }
+        raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        tag = '"' + hashlib.sha1(raw).hexdigest()[:24] + '"'
+        headers = {"ETag": tag, "Cache-Control": "private, no-cache"}
+        if request.headers.get("if-none-match") == tag:
+            return Response(status_code=304, headers=headers)
+        return Response(raw, media_type="application/json", headers=headers)
 
     def stream_source(r, direct: bool = False, cast: bool = False) -> tuple[Path, str]:
         """配るファイルと MIME。変換が要るものは変換してから返す。"""

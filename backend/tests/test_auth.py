@@ -598,3 +598,47 @@ def make_jpeg(path):
     import subprocess
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=red:s=64x64:d=1", "-frames:v", "1", str(path)], check=True)
     return path.read_bytes()
+
+
+def test_library_is_not_sent_again_when_unchanged(env):
+    app, cfg, _ = env
+    admin = setup_admin(app, cfg)
+    r = admin.get("/api/library")
+    assert r.status_code == 200 and r.json()["tracks"]
+    tag = r.headers["etag"]
+    assert "no-cache" in r.headers["cache-control"] and "private" in r.headers["cache-control"]
+    again = admin.get("/api/library", headers={"If-None-Match": tag})
+    assert again.status_code == 304 and again.content == b""
+    assert admin.get("/api/library").headers["etag"] == tag                     # 時刻などで毎回変わらない
+
+
+def test_library_tag_changes_when_my_records_change(env):
+    app, cfg, _ = env
+    admin = setup_admin(app, cfg)
+    tag = admin.get("/api/library").headers["etag"]
+    t = ids(admin)[0]
+    assert admin.post(f"/api/tracks/{t}/played").status_code == 200
+    r = admin.get("/api/library", headers={"If-None-Match": tag})
+    assert r.status_code == 200 and r.headers["etag"] != tag
+
+
+def test_library_tag_is_per_person(env):
+    app, cfg, _ = env
+    admin = setup_admin(app, cfg)
+    m = add_member(app, admin)
+    t = ids(admin)[0]
+    admin.post(f"/api/tracks/{t}/played")
+    a, b = admin.get("/api/library"), m.get("/api/library")
+    assert a.headers["etag"] != b.headers["etag"]
+    assert m.get("/api/library", headers={"If-None-Match": a.headers["etag"]}).status_code == 200   # 人の版では 304 にならない
+
+
+def test_device_kind_is_logged_for_trouble_shooting(env, caplog):
+    import logging
+    app, cfg, _ = env
+    c = client(app, "192.168.0.86")
+    with caplog.at_level(logging.INFO, logger="otokura"):
+        c.get("/api/auth/state", headers={"User-Agent": "Mozilla/5.0 (Linux; Android 7.1.2; AEOBC) Silk/99.1 like Chrome/99.0"})
+        c.get("/api/auth/state", headers={"User-Agent": "Mozilla/5.0 (Linux; Android 7.1.2; AEOBC) Silk/99.1 like Chrome/99.0"})
+    lines = [r.getMessage() for r in caplog.records if "Silk/99.1" in r.getMessage()]
+    assert len(lines) == 1 and "192.168.0.86" in lines[0]       # 同じ端末は 1 回だけ
