@@ -642,3 +642,15 @@ def test_device_kind_is_logged_for_trouble_shooting(env, caplog):
         c.get("/api/auth/state", headers={"User-Agent": "Mozilla/5.0 (Linux; Android 7.1.2; AEOBC) Silk/99.1 like Chrome/99.0"})
     lines = [r.getMessage() for r in caplog.records if "Silk/99.1" in r.getMessage()]
     assert len(lines) == 1 and "192.168.0.86" in lines[0]       # 同じ端末は 1 回だけ
+
+
+def test_screen_diagnosis_is_logged_but_limited(env, caplog):
+    import logging
+    app, cfg, _ = env
+    admin = setup_admin(app, cfg)
+    m = add_member(app, admin)
+    with caplog.at_level(logging.INFO, logger="otokura"):
+        assert m.post("/api/diag", json={"what": "home-tiles", "h": 0, "big": "x" * 10000}).status_code == 200   # 家族の端末からも送れる
+    lines = [r.getMessage() for r in caplog.records if "画面の診断" in r.getMessage()]
+    assert len(lines) == 1 and "home-tiles" in lines[0] and len(lines[0]) < 2500
+    assert client(app, "192.168.0.99").post("/api/diag", json={"what": "x"}).status_code == 401      # ログインしていない人は送れない

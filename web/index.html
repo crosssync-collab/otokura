@@ -1488,7 +1488,21 @@ function applyMarquee(root){
   });
 }
 {let t=null;addEventListener('resize',()=>{clearTimeout(t);t=setTimeout(()=>{renderMini();renderXP();enhanceShelves($('#page'));},250);});}
-new MutationObserver(()=>{cancelAnimationFrame(enhanceShelves._f);enhanceShelves._f=requestAnimationFrame(()=>{enhanceShelves($('#page'));applyMarquee($('#page'));});})
+// ホームのタイルの段が潰れていないか確かめる。Echo Show の Silk で高さが 0 になった(原因はまだ分からない)ので、
+// その端末の様子を 1 回だけ NAS に報告し、高さを幅に合わせて直接決めて出す
+function checkTiles(){
+  const sc=document.querySelector('#page .sc.photo'),bs=sc?[...sc.children]:[];if(!bs.length)return;
+  const r=bs[0].getBoundingClientRect();if(r.width>20&&r.height>r.width*.8)return;
+  if(!checkTiles.sent&&LIVE){checkTiles.sent=true;
+    const cs=e=>{if(!e)return null;const c=getComputedStyle(e);return {d:c.display,w:c.width,h:c.height,pt:c.paddingTop,ar:c.aspectRatio,pos:c.position,ov:c.overflow};};
+    const b=bs[0],bf=getComputedStyle(b,'::before');
+    api('/api/diag',{method:'POST',json:{what:'home-tiles',vw:innerWidth,vh:innerHeight,dpr:devicePixelRatio,hs:st.set.hs,
+      sc:{...cs(sc),gtc:getComputedStyle(sc).gridTemplateColumns,n:bs.length,size:[sc.offsetWidth,sc.offsetHeight]},
+      btn:{...cs(b),size:[r.width,r.height]},before:{d:bf.display,pt:bf.paddingTop,c:bf.content},ic:cs(b.querySelector('.ic')),label:cs(b.lastElementChild),
+      supports:{ar:CSS.supports('aspect-ratio','1'),inset:CSS.supports('inset','0')}}}).catch(()=>{});}
+  bs.forEach(x=>{if(x.offsetWidth>20)x.style.height=x.offsetWidth+'px';});
+}
+new MutationObserver(()=>{cancelAnimationFrame(enhanceShelves._f);enhanceShelves._f=requestAnimationFrame(()=>{enhanceShelves($('#page'));applyMarquee($('#page'));checkTiles();});})
   .observe(document.getElementById('page'),{childList:true});
 function renderMini(){
   if(!cur()){$('#mini').hidden=true;return;}$('#mini').hidden=false;

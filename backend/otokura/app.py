@@ -111,6 +111,12 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
 
     seen_devices: set[tuple[str, str]] = set()
 
+    @app.post("/api/diag")
+    def diag(request: Request, body: dict = Body(...)):
+        """画面が自分の表示の崩れを見つけたときの報告。ログに残すだけ。"""
+        log.info("画面の診断 %s: %s", request.client.host if request.client else "", json.dumps(body, ensure_ascii=False)[:2000])
+        return {"ok": True}
+
     @app.get("/api/auth/state")
     def auth_get(request: Request):
         ua = request.headers.get("user-agent", "")[:300]

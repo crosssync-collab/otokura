@@ -54,6 +54,7 @@ MEMBER_WRITES = [re.compile(p) for p in (
     r"/api/playlists(/\d+)?",
     r"/api/settings",
     r"/api/dlna/[^/]+/(load|play|pause|stop|seek|volume)",
+    r"/api/diag",                                             # 表示の崩れの報告(ログに残すだけ)
 )]
 ADMIN_READS = [re.compile(r"/api/users(/.*)?")]
 _LINKABLE = {"track": re.compile(r"/api/tracks/(\d+)/stream"), "art": re.compile(r"/api/art/(\d+)")}
