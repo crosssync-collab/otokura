@@ -809,27 +809,27 @@ function pageLibrary(tab){
   let body='';
   if(tab==='albums'){
     let l=AL.filter(a=>visAl(a)&&m(a.t,a.a,a.g));
-    const f={name:(a,b)=>a.t.localeCompare(b.t,'ja'),artist:(a,b)=>a.a.localeCompare(b.a,'ja'),year:(a,b)=>b.y-a.y,added:(a,b)=>b.added-a.added,plays:(a,b)=>songsOfAl(b.id).reduce((x,s)=>x+s.plays,0)-songsOfAl(a.id).reduce((x,s)=>x+s.plays,0),random:()=>Math.random()-.5}[sortKey];
+    const f={name:(a,b)=>JA.compare(a.t,b.t),artist:(a,b)=>JA.compare(a.a,b.a),year:(a,b)=>b.y-a.y,added:(a,b)=>b.added-a.added,plays:(a,b)=>songsOfAl(b.id).reduce((x,s)=>x+s.plays,0)-songsOfAl(a.id).reduce((x,s)=>x+s.plays,0),random:()=>Math.random()-.5}[sortKey];
     l=l.sort(f);
-    body=!l.length?empty():view==='grid'?`<div class="grid">${l.map(albumCard).join('')}</div>`
-      :l.map(a=>`<a class="lrow" href="${href('album/'+a.id)}" data-sel="a:${a.id}">${cover(a)}<span class="tt"><b>${esc(a.t)}</b><small>${esc(a.a)}${a.y?' ・ '+a.y:''} ・ ${a.f}</small></span></a>`).join('');
+    body=!l.length?empty():view==='grid'?`<div class="grid">${chunk(l,albumCard)}</div>`
+      :chunk(l,a=>`<a class="lrow" href="${href('album/'+a.id)}" data-sel="a:${a.id}">${cover(a)}<span class="tt"><b>${esc(a.t)}</b><small>${esc(a.a)}${a.y?' ・ '+a.y:''} ・ ${a.f}</small></span></a>`);
   }
   if(tab==='artists'){
     let l=artists.filter(a=>m(a)&&albumsOf(a).length);
-    l=sortKey==='count'?l.sort((a,b)=>albumsOf(b).length-albumsOf(a).length):l.sort((a,b)=>a.localeCompare(b,'ja'));
-    body=!l.length?empty():view==='grid'?`<div class="grid">${l.map(a=>{return `<a class="card round" href="${href('artist/'+a)}">${artistCover(a)}<b>${esc(a)}</b><small>${albumsOf(a).length} アルバム</small></a>`}).join('')}</div>`
-      :l.map(a=>{return `<a class="lrow round" href="${href('artist/'+a)}">${artistCover(a)}<span class="tt"><b>${esc(a)}</b><small>${albumsOf(a).length} アルバム</small></span></a>`}).join('');
+    l=sortKey==='count'?l.sort((a,b)=>albumsOf(b).length-albumsOf(a).length):l.sort((a,b)=>JA.compare(a,b));
+    body=!l.length?empty():view==='grid'?`<div class="grid">${chunk(l,a=>{return `<a class="card round" href="${href('artist/'+a)}">${artistCover(a)}<b>${esc(a)}</b><small>${albumsOf(a).length} アルバム</small></a>`})}</div>`
+      :chunk(l,a=>{return `<a class="lrow round" href="${href('artist/'+a)}">${artistCover(a)}<span class="tt"><b>${esc(a)}</b><small>${albumsOf(a).length} アルバム</small></span></a>`});
   }
   if(tab==='genres'){
     let l=GENRES.filter(g=>m(g)&&AL.some(a=>a.g===g&&visAl(a)));
-    l=sortKey==='count'?l.sort((a,b)=>AL.filter(x=>x.g===b).length-AL.filter(x=>x.g===a).length):l.sort((a,b)=>a.localeCompare(b,'ja'));
+    l=sortKey==='count'?l.sort((a,b)=>AL.filter(x=>x.g===b).length-AL.filter(x=>x.g===a).length):l.sort((a,b)=>JA.compare(a,b));
     body=!l.length?empty():`<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(168px,1fr))">${l.map(g=>`<a class="tile" href="${href('genre/'+g)}" style="background:${cvBg(GENRES.indexOf(g),GH[g]||200)}">${esc(g)}</a>`).join('')}</div>`;
   }
   if(tab==='songs'){
     let l=SONGS.filter(s=>vis(s)&&m(s.t,alOf(s).a,alOf(s).t));
-    const f={name:(a,b)=>a.t.localeCompare(b.t,'ja'),plays:(a,b)=>b.plays-a.plays,added:(a,b)=>alOf(b).added-alOf(a).added,random:()=>Math.random()-.5}[sortKey]||(()=>0);
+    const f={name:(a,b)=>JA.compare(a.t,b.t),plays:(a,b)=>b.plays-a.plays,added:(a,b)=>alOf(b).added-alOf(a).added,random:()=>Math.random()-.5}[sortKey]||(()=>0);
     l=l.sort(f);const c=cx(l.map(s=>s.id));
-    body=!l.length?empty():l.map((s,i)=>songRow(s,c,i)).join('');
+    body=!l.length?empty():chunk(l,(s,i)=>songRow(s,c,i));
   }
   if(tab==='folders')body=folderBody();
   const showTools=tab!=='folders';
@@ -839,6 +839,22 @@ function pageLibrary(tab){
    ${showTools?`<div class="toolbar"><label class="qf">${ico('search',20)}<input id="qf" value="${esc(st.lib.q)}" placeholder="絞り込み" aria-label="一覧を絞り込む"></label>${sortBtn}${viewBtn}</div>`:''}
    <div id="libbody">${body}</div>`;
 }
+/* 長い一覧は先頭だけ作り、下へ近づいたら続きを足す(1.8 万曲を一度に作ると 27 万個の要素になり、遅い端末で 30 秒かかった) */
+const LAZY=new Map(),LAZY_N=60,JA=new Intl.Collator('ja');let lazyId=0;
+const lazyIO=window.IntersectionObserver?new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)lazyMore(e.target);}),{root:document.getElementById('page'),rootMargin:'900px 0px'}):null;
+function chunk(l,fn){
+  if(!lazyIO||l.length<=LAZY_N)return l.map((x,i)=>fn(x,i)).join('');
+  const id=++lazyId;LAZY.set(id,{l,fn,i:LAZY_N});
+  return l.slice(0,LAZY_N).map((x,i)=>fn(x,i)).join('')+`<div class="lazy" data-lazy="${id}" style="grid-column:1/-1;height:1px"></div>`;
+}
+function lazyMore(el){
+  const o=LAZY.get(+el.dataset.lazy);lazyIO.unobserve(el);if(!o){el.remove();return;}
+  const a=o.i,b=Math.min(a+LAZY_N*2,o.l.length);
+  el.insertAdjacentHTML('beforebegin',o.l.slice(a,b).map((x,k)=>o.fn(x,a+k)).join(''));o.i=b;
+  if(b>=o.l.length){LAZY.delete(+el.dataset.lazy);el.remove();}else lazyIO.observe(el);
+  markPlaying();markSel();
+}
+const lazyScan=()=>{if(lazyIO)document.querySelectorAll('#page .lazy').forEach(e=>lazyIO.observe(e));};
 const empty=()=>`<div class="empty"><b>見つかりませんでした</b>キーワードか、ソースの絞り込みを確認してください。</div>`;
 
 /* folders */
@@ -1030,7 +1046,7 @@ const NAVS=[['home','home','ホーム'],['library','lib','ライブラリ'],['pl
 const TITLES={home:'ホーム',library:'ライブラリ',playlists:'プレイリスト',search:'検索',settings:'設定'};
 let lastPage=null;
 function render(keep){
-  const r=route();ctxs=[];
+  const r=route();ctxs=[];LAZY.clear();
   const main=['home','library','playlists','search'].includes(r.a)?r.a:(r.a==='settings'&&!r.b?'settings':null);
   let page,title,back=false,html='';
   if(LIVE&&r.a==='settings'&&Date.now()-serverAt>5000)refreshServer();
@@ -1048,7 +1064,7 @@ function render(keep){
   const active=r.a==='album'||r.a==='artist'||r.a==='genre'||r.a==='decade'?'library':r.a==='playlist'?'playlists':(r.a===''?'home':r.a);
   $('#nav').innerHTML=NAVS.map(n=>`<a class="ni" href="#/${n[0]}" ${active===n[0]?'aria-current="page"':''}><span class="pill">${ico(n[1],24)}</span><span>${n[2]}</span></a>`).join('')+`<a class="ni desk" href="#/settings" ${r.a==='settings'?'aria-current="page"':''}><span class="pill">${ico('cog',24)}</span><span>設定</span></a>`;
   pg.classList.toggle('sel-on',!!st.sel);
-  markSel();updateScan();
+  markSel();updateScan();lazyScan();
   if(r.a==='search'&&!keep){const i=$('#sq');if(i&&matchMedia('(pointer:fine)').matches)i.focus();}
 }
 function renderBar(title,back,r){
@@ -2087,7 +2103,7 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('input',e=>{
   const t=e.target;
-  if(t.id==='qf'){st.lib.q=t.value;const r=route();const body=pageLibrary(r.b);const tmp=document.createElement('div');tmp.innerHTML=body;$('#libbody').innerHTML=tmp.querySelector('#libbody').innerHTML;markPlaying();markSel();}
+  if(t.id==='qf'){st.lib.q=t.value;const r=route();const body=pageLibrary(r.b);const tmp=document.createElement('div');tmp.innerHTML=body;$('#libbody').innerHTML=tmp.querySelector('#libbody').innerHTML;markPlaying();markSel();lazyScan();}
   if(t.id==='sq'){st.searchQ=t.value;$('#sres').innerHTML=searchBody();markPlaying();enhanceShelves($('#sres'));}
   if(t.dataset&&t.dataset.eq!=null&&t.matches('input')){fxEqInput(+t.dataset.eq,+t.value);}
   if(t.dataset&&t.dataset.fxwet){fx.wet=+t.value;t.nextElementSibling.textContent=fx.wet+'%';fxSave();clearTimeout(eqRouteT);eqRouteT=setTimeout(fxRoute,150);}
