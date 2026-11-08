@@ -82,6 +82,7 @@ h1,h2,h3{font-family:var(--display);margin:0;font-weight:700}
 
 /* ---------- atoms ---------- */
 .cover{aspect-ratio:1;background-size:cover;border-radius:var(--cr);flex:none;position:relative;overflow:hidden}
+.cover::before{content:"";float:left;padding-top:100%}.cover::after{content:"";display:block;clear:both}   /* aspect-ratio を知らないブラウザでも正方形 */
 .cover .eq{position:absolute;inset:0;display:none;place-items:center;background:rgba(0,0,0,.38);color:#fff}
 .is-playing > .cover .eq,.cover.is-playing .eq{display:grid}
 .btn{display:inline-flex;align-items:center;gap:8px;height:42px;padding:0 20px;border-radius:21px;background:var(--pri);color:var(--on-pri);font-weight:500}
@@ -113,8 +114,9 @@ button.chip[aria-pressed="true"],button.chip[aria-selected="true"]{background:va
 .sc .ic svg{display:none}   /* 写真を使うのでアイコンは出さない(写真が読めないときだけ下の色) */
 .sc.photo{grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
 @media (min-width:700px){.sc.photo{grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px}}
-.sc.photo button{position:relative;display:block;padding:0;aspect-ratio:1;border-radius:14px;overflow:hidden}
-.sc.photo .ic{width:100%;height:100%;border-radius:0}
+.sc.photo button{position:relative;display:block;padding:0;border-radius:14px;overflow:hidden}
+.sc.photo button::before{content:"";display:block;padding-top:100%}   /* 正方形。aspect-ratio を知らない古いブラウザ(Echo Show の Silk など)でも崩れない */
+.sc.photo .ic{position:absolute;inset:0;width:100%;height:100%;border-radius:0}
 .sc.photo button>span:last-child{position:absolute;left:0;right:0;bottom:0;padding:16px 6px 5px;font-size:11px;font-weight:700;line-height:1.2;color:#fff;text-align:left;
   background:linear-gradient(transparent,rgba(0,0,0,.7));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (min-width:700px){.sc.photo button>span:last-child{font-size:13px;padding:20px 8px 7px}}
@@ -740,7 +742,7 @@ const artBg=(al,size=300)=>al.artUrl?`url('${al.artUrl}') center/cover no-repeat
 const cover=(al,cls='')=>`<div class="cover ${cls}" style="background:${artBg(al)}"><span class="eq">${ico('vol',22)}</span></div>`;
 let ARTIST_ART={};   // アーティスト名 → Web から取った写真(無ければアルバムのカバー)
 const artistCover=(a,al=albumsOf(a)[0],size=300)=>ARTIST_ART[a]?`<div class="cover" style="background:url('${API}/api/artistart/${ARTIST_ART[a]}?size=${size}') center/cover no-repeat,${cvBg(al.id,al.h)}"><span class="eq">${ico('vol',22)}</span></div>`:cover(al);
-const songsOfAl=id=>SONGS.filter(s=>s.al===id);
+const songsOfAl=id=>{const a=AL[id];return a&&a.tr?a.tr.map(i=>SONGS[i]):SONGS.filter(s=>s.al===id);};   // アルバムが持つ曲の番号から引く(毎回 1.8 万曲を探さない)
 const albumsOf=name=>AL.filter(a=>a.a===name&&visAl(a));
 const totalD=ids=>ids.reduce((x,i)=>x+SONGS[i].d,0);
 const extOf=al=>{const e=al.f.split(' ')[0].toLowerCase();return e==='aac'?'m4a':e;};
@@ -775,10 +777,12 @@ function pageHome(){
   const btn=(a,i,t)=>`<button data-act="${['albums','artists','genres','songs','playlists','folders'].includes(a)?'lib':a}" data-t="${a}"><span class="ic" style="background-image:url('mix/${SC_ART[a]||a}.jpg')">${ico(i,26)}</span><span>${t}</span></button>`;
   const albums=AL.filter(visAl);
   // 最近再生したアルバム: 最後に再生した時刻の新しい順(左が一番最近)。再生していないアルバムは出さない。モックは日数で並べる
-  const lastOf=a=>Math.max(...songsOfAl(a.id).map(s=>s.last||(s.ago<999?-s.ago*86400:-1e12)));
-  const recent=albums.filter(a=>songsOfAl(a.id).some(s=>s.last||s.ago<999)).sort((a,b)=>lastOf(b)-lastOf(a)).slice(0,8);
+  const sum=new Map(albums.map(a=>{let last=-Infinity,played=false,plays=0;   // アルバムごとに 1 回だけ数える
+    for(const s of songsOfAl(a.id)){last=Math.max(last,s.last||(s.ago<999?-s.ago*86400:-1e12));played=played||!!(s.last||s.ago<999);plays+=s.plays;}
+    return [a.id,{last,played,plays}];}));
+  const recent=albums.filter(a=>sum.get(a.id).played).sort((a,b)=>sum.get(b.id).last-sum.get(a.id).last).slice(0,8);
   const added=albums.slice().sort((a,b)=>b.added-a.added).slice(0,8);
-  const topA=albums.slice().sort((a,b)=>songsOfAl(b.id).reduce((x,s)=>x+s.plays,0)-songsOfAl(a.id).reduce((x,s)=>x+s.plays,0)).slice(0,8);
+  const topA=albums.slice().sort((a,b)=>sum.get(b.id).plays-sum.get(a.id).plays).slice(0,8);
   if(!st.rand)st.rand=shuffle(albums).slice(0,8).map(a=>a.id);
   const rand=st.rand.map(i=>AL[i]).filter(visAl);
   const quick=shuffle(vs.filter(s=>s.fav)).slice(0,8);
