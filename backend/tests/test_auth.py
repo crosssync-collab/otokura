@@ -308,9 +308,12 @@ def test_records_are_per_person(env):
     # プレイリスト: 他の人のものは見えず、触れない
     p = admin.post("/api/playlists", json={"name": "私の", "trackIds": [a]}).json()
     assert m.get("/api/playlists").json() == []
-    # この端末の曲('L:…')が混じっても 500 にならず、サーバーの曲だけが入る
-    q = admin.post("/api/playlists", json={"name": "龍の混在", "trackIds": ["L:abc/x.mp3", a]})
-    assert q.status_code == 200 and q.json()["trackIds"] == [a]
+    # この端末の曲('L:…')が混じっても 500 にならず、並び順のまま保存される。不正な id は入らない
+    q = admin.post("/api/playlists", json={"name": "龍の混在", "trackIds": ["L:abc/x.mp3", a, "zzz", "L:abc/y.mp3"]})
+    assert q.status_code == 200 and q.json()["trackIds"] == ["L:abc/x.mp3", a, "L:abc/y.mp3"] and q.json()["missing"] == 0
+    q2 = admin.put(f"/api/playlists/{q.json()['id']}", json={"addTrackIds": ["L:abc/z.mp3"]}).json()
+    assert q2["trackIds"] == ["L:abc/x.mp3", a, "L:abc/y.mp3", "L:abc/z.mp3"]
+    assert admin.get("/api/playlists").json()[-1]["trackIds"] == q2["trackIds"]
     assert m.put(f"/api/playlists/{p['id']}", json={"name": "乗っ取り"}).status_code == 404
     assert m.delete(f"/api/playlists/{p['id']}").status_code == 404
     assert admin.get("/api/playlists").json()[0]["name"] == "私の"

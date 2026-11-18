@@ -942,7 +942,7 @@ function pagePlaylists(){
 function pagePlaylist(id){
   const p=PL[+id];if(!p)return {title:'プレイリスト',html:empty(),back:true};
   const ids=plIds(p),c=cx(ids),al=ids.length?alOf(SONGS[ids[0]]):AL[0];
-  return {title:p.name,back:true,html:`${detailHead({cover:cover(al),title:p.name,sub:`${ids.length} 曲 ・ ${fmtTotal(totalD(ids))}`,chips:p.smart?[['スマート','pri'],[ruleText(p.rule)]]:[]})}
+  return {title:p.name,back:true,html:`${detailHead({cover:cover(al),title:p.name,sub:`${ids.length} 曲 ・ ${fmtTotal(totalD(ids))}`+(p.dbids&&p.dbids.length>p.ids.length?` ・ この端末にない曲 ${p.dbids.length-p.ids.length}`:''),chips:p.smart?[['スマート','pri'],[ruleText(p.rule)]]:[]})}
    ${actBar(c,p.name+' のミックス',`<button class="ib" data-act="plMenu" data-p="${p.id}" aria-label="プレイリストのメニュー">${ico('more')}</button>`)}${ids.length?ids.map((sid,i)=>songRow(SONGS[sid],c,i)).join(''):`<div class="empty"><b>曲がありません</b>曲のメニューの「プレイリストに追加」から入れられます。</div>`}`};
 }
 
@@ -1989,7 +1989,7 @@ const ACT={
   mixInstant:d=>{closeSheet();mixInstant(+d.id);},
   menu:(d,el,e)=>{e&&e.stopPropagation();menuSheet(d.k,d.id);},
   plPick:d=>plPickSheet(d.id),
-  plAdd:d=>{closeSheet();if(SONGS[+d.id].local){toast('この端末の曲はプレイリストに入れられません(NAS の曲だけ)');return;}const p=PL[+d.p];p.ids.push(+d.id);toast(`「${p.name}」に追加しました`);
+  plAdd:d=>{closeSheet();const p=PL[+d.p];p.ids.push(+d.id);if(p.dbids)p.dbids.push(SONGS[+d.id].dbid);toast(`「${p.name}」に追加しました`);
     if(LIVE)api(`/api/playlists/${p.dbid}`,{method:'PUT',json:{addTrackIds:[SONGS[+d.id].dbid]}}).catch(e=>toast('保存できませんでした: '+e.message));},
   plNew:d=>plNewSheet(false,d.id),plNewSmart:()=>plNewSheet(true),plSave:()=>plSave(),
   plMenu:d=>{const p=PL[+d.p];openSheet('plm',esc(p.name),mi('plRename','brush','名前を変える',`data-p="${p.id}"`)+mi('plDelAsk','close','このプレイリストを削除',`data-p="${p.id}"`));},
@@ -2210,13 +2210,14 @@ function keepQueue(){const playingDb=cur()?cur().dbid:null,qDb=st.q.map(i=>SONGS
 function afterLibrary({playingDb,qDb}){
   deriveLibrary();
   byDb=new Map(SONGS.map(s=>[s.dbid,s.id]));
+  for(const p of PL)if(p.dbids)p.ids=p.dbids.map(i=>byDb.get(i)).filter(i=>i!=null);   // この端末の曲は番号が変わるので dbid から引き直す
   if(qDb.length){const q=qDb.map(x=>byDb.get(x)).filter(x=>x!=null);if(q.length){st.q=q;const i=q.indexOf(byDb.get(playingDb));st.qi=i>=0?i:0;}}
   st.rand=null;
 }
 async function loadPlaylists(){
   const l=await api('/api/playlists');
   PL.length=0;
-  l.forEach(p=>PL.push({id:PL.length,dbid:p.id,name:p.name,smart:!!p.rule,rule:p.rule,ids:p.trackIds.map(i=>byDb.get(i)).filter(i=>i!=null)}));
+  l.forEach(p=>PL.push({id:PL.length,dbid:p.id,name:p.name,smart:!!p.rule,rule:p.rule,dbids:p.trackIds,ids:p.trackIds.map(i=>byDb.get(i)).filter(i=>i!=null)}));
 }
 function saveStats(s,body){if(LIVE&&!s.local)api(`/api/tracks/${s.dbid}/stats`,{method:'PUT',json:body}).catch(e=>toast('保存できませんでした: '+e.message));}
 let setTimer=null;
@@ -2999,7 +3000,7 @@ async function plSave(){
   closeSheet();
   let dbid=null;
   if(LIVE){try{dbid=(await api('/api/playlists',{method:'POST',json:{name,rule:smart?rule:null,trackIds:ids.map(i=>SONGS[i].dbid)}})).id;}catch(e){toast('作成できませんでした: '+e.message);return;}}
-  PL.push({id:PL.length,dbid,name,smart,rule,ids});
+  PL.push({id:PL.length,dbid,name,smart,rule,ids,dbids:ids.map(i=>SONGS[i].dbid)});
   toast(`「${name}」を作りました`);go('playlist/'+(PL.length-1));
 }
 

@@ -636,23 +636,29 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
                 "skips": r["skips"] if r else 0, "fav": bool(r and r["fav"]), "rating": r["rating"] if r else 0}
 
     # ---------- プレイリスト ----------
+    LOCAL_SRC = "@local"   # この端末の曲('L:…')を入れた行の source。rel に曲の id をそのまま持つ。端末にしか無いので、別の端末では鳴らない
+
     def pl_out(p) -> dict:
-        items = db.q("SELECT t.id FROM playlist_items i JOIN tracks t ON t.source=i.source AND t.rel=i.rel "
-                     "WHERE i.playlist_id=? ORDER BY i.pos", (p["id"],))
-        missing = db.one("SELECT COUNT(*) n FROM playlist_items i LEFT JOIN tracks t ON t.source=i.source AND "
-                         "t.rel=i.rel WHERE i.playlist_id=? AND t.id IS NULL", (p["id"],))["n"]
+        # 並び順のまま、NAS の曲は数字の id、この端末の曲は 'L:…' の文字列で返す(画面が曲の一覧から引き直す)
+        rows = db.q("SELECT i.source, i.rel, t.id FROM playlist_items i LEFT JOIN tracks t ON t.source=i.source AND t.rel=i.rel "
+                    "WHERE i.playlist_id=? ORDER BY i.pos", (p["id"],))
+        ids = [r["rel"] if r["source"] == LOCAL_SRC else r["id"] for r in rows if r["source"] == LOCAL_SRC or r["id"] is not None]
+        missing = sum(1 for r in rows if r["source"] != LOCAL_SRC and r["id"] is None)
         return {"id": p["id"], "name": p["name"], "rule": json.loads(p["rule"]) if p["rule"] else None,
-                "trackIds": [r["id"] for r in items], "missing": missing, "updatedAt": p["updated_at"]}
+                "trackIds": ids, "missing": missing, "updatedAt": p["updated_at"]}
 
     def set_items(pid: int, ids: list[int]):
         c = db.conn
         c.execute("DELETE FROM playlist_items WHERE playlist_id=?", (pid,))
         pos = 0
         for tid in ids:
-            # この端末の曲('L:…')や不正な id はサーバーに無いので入れない
+            if isinstance(tid, str) and tid.startswith("L:") and len(tid) <= 600:   # この端末の曲
+                c.execute("INSERT INTO playlist_items(playlist_id,pos,source,rel) VALUES(?,?,?,?)", (pid, pos, LOCAL_SRC, tid))
+                pos += 1
+                continue
             try:
                 tid = int(tid)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError):   # 不正な id は入れない
                 continue
             r = db.one("SELECT source, rel FROM tracks WHERE id=?", (tid,))
             if r:
