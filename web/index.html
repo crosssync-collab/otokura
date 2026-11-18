@@ -1517,7 +1517,11 @@ function checkTiles(){
       btn:{...cs(b),size:[r.width,r.height]},before:{d:bf.display,pt:bf.paddingTop,c:bf.content},ic:cs(b.querySelector('.ic')),label:cs(b.lastElementChild),
       supports:{ar:CSS.supports('aspect-ratio','1'),inset:CSS.supports('inset','0')}}}).catch(()=>{});}
   bs.forEach(x=>{if(x.offsetWidth>20)x.style.height=x.offsetWidth+'px';});
+  // 直したあとの高さを 1 回だけ報告する(回避策が効いたかをログで確かめる)
+  if(!checkTiles.sentAfter&&LIVE){checkTiles.sentAfter=true;requestAnimationFrame(()=>{const a=bs[0].getBoundingClientRect();
+    api('/api/diag',{method:'POST',json:{what:'home-tiles-after',w:a.width,h:a.height,ok:a.height>a.width*.8,sc:[sc.offsetWidth,sc.offsetHeight]}}).catch(()=>{});});}
 }
+{let t=null;const again=()=>{clearTimeout(t);t=setTimeout(checkTiles,300);};addEventListener('resize',again);addEventListener('load',again);}
 new MutationObserver(()=>{cancelAnimationFrame(enhanceShelves._f);enhanceShelves._f=requestAnimationFrame(()=>{enhanceShelves($('#page'));applyMarquee($('#page'));checkTiles();});})
   .observe(document.getElementById('page'),{childList:true});
 function renderMini(){
