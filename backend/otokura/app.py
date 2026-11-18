@@ -649,7 +649,12 @@ def create_app(cfg: Config | None = None, start_background: bool = True) -> Fast
         c.execute("DELETE FROM playlist_items WHERE playlist_id=?", (pid,))
         pos = 0
         for tid in ids:
-            r = db.one("SELECT source, rel FROM tracks WHERE id=?", (int(tid),))
+            # この端末の曲('L:…')や不正な id はサーバーに無いので入れない
+            try:
+                tid = int(tid)
+            except (TypeError, ValueError):
+                continue
+            r = db.one("SELECT source, rel FROM tracks WHERE id=?", (tid,))
             if r:
                 c.execute("INSERT INTO playlist_items(playlist_id,pos,source,rel) VALUES(?,?,?,?)",
                           (pid, pos, r["source"], r["rel"]))
