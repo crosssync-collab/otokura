@@ -1585,7 +1585,7 @@ function setPlaying(v){
   if(LIVE&&castOn()){castPlay(v);return;}
   if(LIVE){
     clearInterval(timer);if(!v)cutJoin();else fxWake();
-    if(v){const r=ensureSrc();if(!r)return;st.playing=true;if(r!=='pending')audio.play().catch(e=>{if(e.name==='AbortError')return;st.playing=false;toast('再生できませんでした: '+e.message);renderMini();renderXP();markPlaying();});}
+    if(v){const r=ensureSrc();if(!r)return;st.playing=true;if(r!=='pending')audio.play().catch(e=>{if(e.name==='AbortError')return;switching=false;st.playing=false;toast('再生できませんでした: '+e.message);renderMini();renderXP();markPlaying();});}
     else{audio.pause();st.playing=false;}
     if(st.playing)timer=setInterval(updateProg,250);
     renderMini();renderXP();markPlaying();if('mediaSession' in navigator)navigator.mediaSession.playbackState=st.playing?'playing':'paused';return;
@@ -2358,15 +2358,14 @@ function liveOnTrack(){
   }
   skipChain=0;
   if(castOn()){castLoad(s,0,true);return;}
-  if(ensureSrc()==='pending')return;if(fadeRun)return;audio.play().then(()=>{switching=false;}).catch(()=>{});
+  if(ensureSrc()==='pending')return;if(fadeRun)return;audio.play().then(()=>{switching=false;}).catch(()=>{switching=false;});
 }
 function mediaMeta(s){
   if(!('mediaSession' in navigator)||!s)return;const al=alOf(s);
   try{navigator.mediaSession.metadata=new MediaMetadata({title:s.t,artist:s.ar||al.a,album:al.t,
     artwork:al.artUrl?[{src:al.artUrl}]:al.art?[300,1000].map(z=>({src:new URL(`${API}/api/art/${al.dbid}?size=${z}&v=${al.artv||''}`,location.href).href,sizes:`${z}x${z}`,type:'image/jpeg'})):[]});}catch(e){}
 }
-if(LIVE){
-  for(const el of [audio,audioB]){
+function wireAudio(el){
     const mine=f=>e=>{if(el===audio)f(e);};   // 先読み中・フェードアウト中の要素の出来事は無視する
     el.preload='auto';
     el.addEventListener('loadedmetadata',mine(()=>{if(pendingSeek){try{audio.currentTime=pendingSeek;}catch(e){}}pendingSeek=0;
@@ -2379,8 +2378,11 @@ if(LIVE){
     el.addEventListener('error',()=>{
       if(el!==audio){el.removeAttribute('src');delete el.dataset.dbid;return;}     // 先読みの失敗は、曲の終わりでふつうに読み直す
       if(!audio.getAttribute('src'))return;const s=cur();st.playing=false;switching=false;renderMini();renderXP();
+      playDiag('error');
       toast(`再生できませんでした(${s?s.t:''})。ファイルが動かされていないか確認し、再スキャンしてください`);});
-  }
+}
+if(LIVE){
+  wireAudio(audio);wireAudio(audioB);
   if('mediaSession' in navigator){const ms=navigator.mediaSession,h=(a,f)=>{try{ms.setActionHandler(a,f);}catch(e){}};
     h('play',()=>setPlaying(true));h('pause',()=>setPlaying(false));h('nexttrack',()=>step(1));h('previoustrack',()=>step(-1));
     h('seekto',e=>{st.pos=e.seekTime;updateProg();});}
@@ -2882,7 +2884,7 @@ function localSrc(s){
   switching=st.playing;audio.dataset.dbid=String(s.dbid);audio.removeAttribute('src');localEnrichFirst(s.lid);
   localFile(s).then(f=>{if(audio.dataset.dbid!==String(s.dbid))return;
     if(localUrlNow)URL.revokeObjectURL(localUrlNow);localUrlNow=URL.createObjectURL(f);audio.src=localUrlNow;
-    if(st.playing)audio.play().then(()=>{switching=false;}).catch(()=>{});})
+    if(st.playing)audio.play().then(()=>{switching=false;}).catch(()=>{switching=false;});})
   .catch(e=>{st.playing=false;switching=false;renderMini();renderXP();toast(e.message);});
   return 'pending';
 }
@@ -3287,10 +3289,76 @@ function fxEnsure(){
     const eq=EQ_F.map((f,i)=>mk('BiquadFilter',{frequency:f,Q:1.41,gain:0}));eq[0].type='lowshelf';eq[9].type='highshelf';for(let i=1;i<9;i++)eq[i].type='peaking';
     fxN={mk,bus:c.createGain(),eq,pre:c.createGain(),tube:null,space:null,echo:null,night:null,limiter:mk('DynamicsCompressor',{threshold:-2,knee:2,ratio:20,attack:.003,release:.12}),tap:c.createGain()};
     fxN.tap.connect(c.destination);
+    c.onstatechange=fxWatch;
     for(const el of [audio,audioB]){const src=c.createMediaElementSource(el),gain=c.createGain();src.connect(gain);gain.connect(fxN.bus);fxEl.set(el,{src,gain});}
     fxRoute();
     return true;
   }catch(e){fxCtx=null;fxN=null;toast('エフェクトを使えません: '+e.message);return false;}
+}
+/* --- 音声処理(AudioContext)が止められたときの立て直し。
+       エフェクトを一度使うと音は全部 AudioContext を通る。Android で画面を消している間などにこれが止められると、
+       表示は「再生中」のまま再生位置も進まなくなる(pause の知らせも来ない)。
+       止まったら動かし直し、だめなら AudioContext を通さない新しい audio 要素に移して鳴らし続ける --- */
+let fxFixT=null,fxDetachT=null;
+function fxWatch(){
+  if(!fxCtx||fxCtx.state==='running'||fxCtx.state==='closed')return;
+  if(!st.playing||castOn())return;
+  fxCtx.resume().catch(()=>{});
+  clearTimeout(fxFixT);fxFixT=setTimeout(()=>{
+    if(!fxCtx||fxCtx.state==='running'||!st.playing||castOn())return;
+    playDiag('fx-suspended');
+    fxDetach(true);
+  },2000);
+}
+function fxDetachSoon(){   // エフェクトもビジュアライザーも使っていなければ、少し待ってから AudioContext を外す(スライダーを動かしている間は待つ)
+  clearTimeout(fxDetachT);
+  fxDetachT=setTimeout(()=>{if(fxCtx&&!fxWanted())fxDetach(false);},3000);
+}
+function fxDetach(forced){   // audio 要素は AudioContext から外せないので、新しい要素に作り直して続きから鳴らす
+  if(!fxCtx||(viz&&!forced))return;
+  if(viz)vizClose();
+  cutJoin();
+  const old=audio,oldB=audioB,pos=old.currentTime||0,src=old.getAttribute('src'),db=old.dataset.dbid,vol=old.volume,play=st.playing&&!castOn();
+  const a=new Audio(),b=new Audio();a.preload=b.preload='auto';
+  wireAudio(a);wireAudio(b);
+  switching=play;audio=a;audioB=b;
+  for(const e of [old,oldB]){try{e.pause();}catch(x){}}
+  oldB.removeAttribute('src');try{oldB.load();}catch(x){}
+  const c=fxCtx;fxCtx=null;fxN=null;fxEl.clear();c.onstatechange=null;c.close().catch(()=>{});
+  if(src){a.dataset.dbid=db;pendingSeek=pos;a.volume=vol;a.src=src;}
+  setTimeout(()=>{try{old.removeAttribute('src');old.load();}catch(x){}},500);   // 前の要素は止めてから捨てる(ローカル曲の blob URL は新しい要素がそのまま使う)
+  applyGain();
+  if(play&&src)a.play().then(()=>{switching=false;}).catch(e=>{switching=false;st.playing=false;clearInterval(timer);renderMini();renderXP();markPlaying();
+    if('mediaSession' in navigator)navigator.mediaSession.playbackState='paused';
+    playDiag('fx-detach-failed',{msg:String(e&&e.message||e)});toast('再生が止まりました。再生ボタンで続きから再開できます');});
+  if(forced)toast('エフェクトが止められたので、エフェクトなしで再生を続けます');
+}
+// 再生中なのに位置が進まないのを見張る(画面を消している間はタイマーが間引かれるので、気づくのは最大 1 分ほど遅れる)
+let stallAt=0,stallPos=-1,stallLogged=false;
+function stallCheck(){
+  if(!LIVE||!st.playing||castOn()||!audio||audio.paused||audio.seeking||switching||fadeRun){stallAt=0;stallPos=-1;return;}
+  const t=audio.currentTime,now=performance.now();
+  if(Math.abs(t-stallPos)>.05){stallPos=t;stallAt=now;stallLogged=false;return;}
+  if(!stallAt||now-stallAt<8000)return;
+  if(fxCtx&&audio.readyState>=3){playDiag('fx-stall',{state:fxCtx.state});stallAt=now;fxDetach(true);return;}   // 音声処理が黙って止まっている
+  if(!stallLogged&&now-stallAt>15000){stallLogged=true;playDiag('stall');}               // それ以外(通信の詰まりなど)は記録だけ
+}
+if(LIVE)setInterval(stallCheck,2000);
+// 再生が止まったときの様子を NAS のログに送る(送れないときは端末に貯めて、次に送る)
+function playDiag(reason,extra){
+  if(!LIVE)return;
+  const s=cur();
+  const d={what:'playback-stop',reason,at:new Date().toISOString(),hidden:document.hidden,local:!!(s&&s.local),codec:s&&s.codec,dur:s&&s.d,
+    pos:audio?Math.round(audio.currentTime):null,paused:audio?audio.paused:null,rs:audio?audio.readyState:null,ns:audio?audio.networkState:null,
+    err:audio&&audio.error?audio.error.code:null,fx:fxCtx?fxCtx.state:'none',fxOn:fxActive(),...(extra||{})};
+  let q=[];try{q=JSON.parse(localStorage.getItem('otokura.diagq')||'[]');}catch(e){}
+  q.push(d);q=q.slice(-20);try{localStorage.setItem('otokura.diagq',JSON.stringify(q));}catch(e){}
+  playDiagFlush();
+}
+function playDiagFlush(){
+  let q=[];try{q=JSON.parse(localStorage.getItem('otokura.diagq')||'[]');}catch(e){}
+  if(!q.length)return;
+  Promise.all(q.map(d=>api('/api/diag',{method:'POST',json:d}))).then(()=>{try{localStorage.removeItem('otokura.diagq');}catch(e){}}).catch(()=>{});
 }
 function fxWake(){   // 操作のときに呼ぶ。つなぐのは AudioContext を動かせる「ユーザーの操作の中」だけ
   if(!fxWanted()&&!fxCtx)return;
@@ -3369,7 +3437,7 @@ function fxBoost(el,s){   // リミッターが動いているときは、静か
   const d=fxActive()?Math.max(0,Math.min(12,gainDb(s))):0;
   n.gain.gain.setTargetAtTime(Math.pow(10,d/20),fxCtx.currentTime,.03);
 }
-function fxChanged(){fxSave();if(fxWanted())fxWake();fxRoute();fxMark();}
+function fxChanged(){fxSave();if(fxWanted())fxWake();fxRoute();fxMark();fxDetachSoon();}
 function fxMark(){
   document.querySelectorAll('[data-fxk]').forEach(b=>b.setAttribute('aria-pressed',String(fx[b.dataset.fxk]===b.dataset.v)));
   document.querySelectorAll('[data-fxsw]').forEach(b=>b.setAttribute('aria-checked',String(!!fx[b.dataset.fxsw])));
@@ -3400,7 +3468,7 @@ function fxRedraw(){document.querySelectorAll('.fxbody').forEach(e=>{e.innerHTML
 let eqRouteT=null;
 function fxEqInput(i,v){   // 動かしている間は値だけ変え、つなぎ直しは止まってから
   fx.bands[i]=v;fx.eq='カスタム';if(v)fx.on=true;fxSave();if(fxWanted())fxWake();fxBands();fxMark();
-  clearTimeout(eqRouteT);eqRouteT=setTimeout(fxRoute,150);
+  clearTimeout(eqRouteT);eqRouteT=setTimeout(fxRoute,150);fxDetachSoon();
 }
 
 /* --- ビジュアライザー(全画面)。Canvas は自作、ミルクドロップは Butterchurn(MIT、CDN から読む)。Stick などでは解像度とコマ数を落とす --- */
@@ -3426,7 +3494,7 @@ function vizClose(fromPop){
   cancelAnimationFrame(v.raf);clearTimeout(v.idle);removeEventListener('resize',vizSize);
   try{fxN.tap.disconnect(v.an);}catch(e){}
   $('#viz').classList.remove('open','ui');$('#vizart').style.display='none';
-  fxSave();if(!fromPop&&history.state&&history.state.viz)history.back();
+  fxSave();if(!fromPop&&history.state&&history.state.viz)history.back();fxDetachSoon();
   if(sheetKind==='fx')fxSheet();
 }
 function vizShowUi(){if(!viz)return;$('#viz').classList.add('ui');clearTimeout(viz.idle);viz.idle=setTimeout(()=>{if(viz)$('#viz').classList.remove('ui');},4000);}
@@ -3557,6 +3625,7 @@ addEventListener('keydown',e=>{
   else if(e.key==='ArrowRight'||e.key==='ArrowLeft'){ACT.vizNext({d:e.key==='ArrowRight'?1:-1});e.preventDefault();}
 });
 if(LIVE)for(const ev of ['pointerdown','keydown'])document.addEventListener(ev,()=>{if(fxCtx&&fxCtx.state==='suspended')fxCtx.resume().catch(()=>{});},{passive:true});
+if(LIVE){document.addEventListener('visibilitychange',()=>{fxWatch();if(!document.hidden)playDiagFlush();});setTimeout(playDiagFlush,5000);}
 
 /* --- ロード画面。JavaScript が重い間も止まらないよう、動きは transform と opacity だけ(GPU で動く) --- */
 const LOADER={shownAt:0,cost:new Map()};
