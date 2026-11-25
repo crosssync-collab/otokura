@@ -269,7 +269,8 @@ class WebInfo:
         item = (kind, key)
         with self._lock:
             if item in self._queued:
-                if first:
+                # 取得中のものは待ち行列にいないので、並べ替えない
+                if first and item in self._queue:
                     self._queue.remove(item)
                     self._queue.appendleft(item)
             else:

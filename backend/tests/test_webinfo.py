@@ -134,3 +134,16 @@ def test_queue_missing_stale_and_daily(web):
     assert w.daily() == 3                # 古くなった分だけ
     assert w.daily() == 0                # 1 日 1 回
     w.wait(20)
+
+
+def test_enqueue_first_while_fetching(web):
+    """取得中の項目をもう一度「先に」頼んでも落ちない(is not in deque の 500)。"""
+    w, db, net = web
+    item = ("artist", "深谷 あおい")
+    with w._lock:
+        w._queued.add(item)              # 取り出し済み・取得中の状態
+    w.enqueue(*item, first=True)
+    assert item not in w._queue
+    w.enqueue("album", "k1")
+    w.enqueue("album", "k1", first=True)
+    w.wait(20)
