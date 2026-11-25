@@ -364,6 +364,7 @@ textarea.lin{width:100%;min-height:220px;border-radius:14px;border:1px solid var
 @container (min-height:640px){.xp:not(.wide):not(.ted) .xl .xart.xlj{display:block;width:min(100cqw,36cqh);flex:none}}
 .xbot button{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted);flex:1 1 0;min-width:0;max-width:96px;padding:6px 0;white-space:nowrap}
 .xbot button.on,.lfbtn.on{color:var(--pri)}
+.xbot .rtx{display:flex;align-items:center;justify-content:center;height:24px;font-size:14px;font-weight:700;letter-spacing:-.02em}
 /* 再生中画面: 縦はそのまま並べる。横並び(.wide)はスマホの横向きのとき、または向きのボタンで「横」を選んだとき(PC でも) */
 .xl,.xr{display:contents}
 .lfbtn,.lfplay,.lfinfo,.lfseek{display:none!important}
@@ -700,6 +701,9 @@ const API=LIVE?window.OTOKURA_API:'';
 let audio=LIVE?new Audio():null;
 let audioB=LIVE?new Audio():null;   // 次の曲を先読みしておく要素。曲をつなぐとき audio と入れ替える
 let pendingSeek=0;
+// 再生速度(この端末に保存)
+const RATES=[.5,.75,1,1.1,1.25,1.5,1.75,2];
+let RATE=(()=>{try{const v=+localStorage.getItem('otokura.rate');return RATES.includes(v)?v:1;}catch(e){return 1;}})();
 /* 再生位置は小数秒。モックでは時計から、LIVE では audio 要素から求める */
 {let _pos=0,_t0=performance.now();
  Object.defineProperty(st,'pos',{enumerable:true,configurable:true,
@@ -1557,6 +1561,7 @@ function renderXP(){
     <div class="xbot"><button data-act="queueSheet">${ico('list')}<span>キュー</span></button>
       <button data-act="mixInstant" data-id="${s.id}">${ico('mix')}<span>ミックス</span></button>
       <button data-act="outSheet">${ico('cast')}<span>再生先</span></button>
+      ${LIVE?`<button class="${RATE!==1?'on':''}" data-act="rateSheet" aria-label="再生速度 ${rateLabel(RATE)}"><b class="rtx">${rateLabel(RATE)}</b><span>速度</span></button>`:''}
       ${LIVE?`<button class="${fxActive()?'on':''}" data-act="fxSheet">${ico('tune')}<span>エフェクト</span></button>`:''}
       <button class="${st.lyr?'on':''}" data-act="lyrToggle">${ico('lyrics')}<span>歌詞</span></button></div></div>`;
   if(st.lyr)mountLyrics();
@@ -2020,6 +2025,7 @@ const ACT={
   localRemove:d=>localRemove(d.id),
   castStop:()=>castStop(),
   fxSheet:()=>fxSheet(),
+  rateSheet:()=>rateSheet(),rateSet:d=>rateSet(+d.v),
   dlSheet:d=>dlSheet(d.id),
   dlGo:d=>{const s=SONGS[+d.id];if(!s)return;closeSheet();
     const a=document.createElement('a');a.href=`${API}/api/tracks/${s.dbid}/download?format=${encodeURIComponent(d.f)}`;a.download='';document.body.appendChild(a);a.click();a.remove();
@@ -2316,7 +2322,7 @@ function gapWait(nx){   // 曲の終わりの直前まで待つ。timeupdate は
   // エフェクトの経路では再生位置がまとまって進み、終わりを飛び越えるので、その分だけ早く始めて前の曲は最後まで鳴らす
   const r=audio.duration-audio.currentTime,lead=fxCtx?Math.min(.06,.012+(fxCtx.baseLatency||0)):.012;
   if(r<=lead){gapTimer=null;joinNow('gap',nx,0);return;}
-  gapTimer=setTimeout(()=>gapWait(nx),Math.max(1,(r-lead)*1000*.8));
+  gapTimer=setTimeout(()=>gapWait(nx),Math.max(1,(r-lead)/(audio.playbackRate||1)*1000*.8));
 }
 function joinNow(kind,nx,len){
   if(!st.playing||SONGS[st.q[nx.i]]!==nx.s||audioB.dataset.dbid!==String(nx.s.dbid)||castOn())return;
@@ -2365,7 +2371,18 @@ function mediaMeta(s){
   try{navigator.mediaSession.metadata=new MediaMetadata({title:s.t,artist:s.ar||al.a,album:al.t,
     artwork:al.artUrl?[{src:al.artUrl}]:al.art?[300,1000].map(z=>({src:new URL(`${API}/api/art/${al.dbid}?size=${z}&v=${al.artv||''}`,location.href).href,sizes:`${z}x${z}`,type:'image/jpeg'})):[]});}catch(e){}
 }
+// 再生速度(この端末に保存。音程は変えない)
+const rateLabel=v=>(v===1?'1':String(v))+'x';
+function rateApply(el){if(!el)return;try{el.preservesPitch=true;el.defaultPlaybackRate=RATE;el.playbackRate=RATE;}catch(e){}}
+function rateSet(v){
+  RATE=v;try{localStorage.setItem('otokura.rate',String(v));}catch(e){}
+  rateApply(audio);rateApply(audioB);
+  if(castOn())toast('Cast・DLNA の機器では速度を変えられません。この端末で鳴らすときに使われます');
+  renderXP();if(sheetKind==='rate')rateSheet();
+}
+function rateSheet(){openSheet('rate','再生速度',`<div class="panel">${RATES.map(v=>`<button class="radio" role="radio" aria-checked="${RATE===v}" data-act="rateSet" data-v="${v}"><span class="dot"></span><span>${rateLabel(v)}${v===1?'(標準)':''}</span></button>`).join('')}</div><p class="muted" style="margin:8px 12px;font-size:13px">音の高さは変わりません。この端末に保存され、次の曲にも使われます。</p>`);}
 function wireAudio(el){
+    rateApply(el);el.addEventListener('loadedmetadata',()=>rateApply(el));
     const mine=f=>e=>{if(el===audio)f(e);};   // 先読み中・フェードアウト中の要素の出来事は無視する
     el.preload='auto';
     el.addEventListener('loadedmetadata',mine(()=>{if(pendingSeek){try{audio.currentTime=pendingSeek;}catch(e){}}pendingSeek=0;
