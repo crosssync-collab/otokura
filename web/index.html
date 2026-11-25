@@ -2374,12 +2374,12 @@ function wireAudio(el){
     el.addEventListener('seeking',mine(()=>{clearTimeout(gapTimer);gapTimer=null;}));
     el.addEventListener('ended',mine(()=>{if(ted){tedAtEnd();return;}lt.ended=true;step(1,true);}));
     el.addEventListener('pause',mine(()=>{if(switching||audio.ended||!st.playing)return;st.playing=false;clearInterval(timer);renderMini();renderXP();markPlaying();}));
-    el.addEventListener('playing',mine(()=>{if(netR.n&&netR.dbid===(cur()||{}).dbid){netR.n=0;netR.pos=0;}}));
+    el.addEventListener('playing',mine(()=>{if(netR.n&&netR.dbid===(cur()||{}).dbid){netR.n=0;netR.pos=0;}}));   // stuck は残す(同じ所で止まるかを見る)
     el.addEventListener('play',mine(()=>{switching=false;if(st.playing)return;st.playing=true;clearInterval(timer);timer=setInterval(updateProg,250);renderMini();renderXP();markPlaying();}));
     el.addEventListener('error',()=>{
       if(el!==audio){el.removeAttribute('src');delete el.dataset.dbid;return;}     // 先読みの失敗は、曲の終わりでふつうに読み直す
       if(!audio.getAttribute('src'))return;const s=cur();
-      if(s&&!s.local&&st.playing&&audio.error&&audio.error.code!==3&&netRetry('error'))return;   // 通信が切れただけなら、つながるのを待つ
+      if(s&&st.playing&&audio.error&&audio.error.code!==3&&netRetry('error'))return;   // 通信が切れただけなら、つながるのを待つ
       st.playing=false;switching=false;renderMini();renderXP();
       playDiag('error');
       toast(`再生できませんでした(${s?s.t:''})。ファイルが動かされていないか確認し、再スキャンしてください`);});
@@ -3346,18 +3346,22 @@ function stallCheck(){
   if(fxCtx&&audio.readyState>=3){playDiag('fx-stall',{state:fxCtx.state});stallAt=now;fxDetach(true);return;}   // 音声処理が黙って止まっている
   if(now-stallAt<15000)return;
   const s=cur();
-  if(s&&!s.local&&audio.readyState<3&&!netR.t){stallAt=now;netRetry('stall');return;}     // NAS の曲が届かない: 読み直す
+  if(s&&audio.readyState<3&&!netR.t){stallAt=now;if(!netRetry('stall'))netGiveUp(s,false);return;}     // データが届かない: 読み直す(だめなら止めて知らせる)
   if(!stallLogged){stallLogged=true;playDiag('stall');}               // それ以外は記録だけ
 }
-// NAS の曲で通信が切れたら、つながるのを待って同じ位置から読み直す(1・2・4・8・15・30 秒…、8 回まで)
-var netR={dbid:null,n:0,t:null,pos:0};
+// 再生が途切れたら同じ位置から読み直す(1・2・4・8・15・30 秒…、8 回まで)。
+// NAS の曲は通信が戻るのを待つ。この端末の曲はファイルを開き直す。同じ位置で 2 回止まったら、その部分を 3 秒飛ばす
+var netR={dbid:null,n:0,t:null,pos:0,stuck:-1};
 function netRetry(why){
-  const s=cur();if(!LIVE||!s||s.local||castOn())return false;
-  if(netR.dbid!==s.dbid){clearTimeout(netR.t);netR={dbid:s.dbid,n:0,t:null,pos:0};}
+  const s=cur();if(!LIVE||!s||castOn())return false;
+  if(netR.dbid!==s.dbid){clearTimeout(netR.t);netR={dbid:s.dbid,n:0,t:null,pos:0,stuck:-1};}
   if(netR.n>=8)return false;
-  netR.pos=Math.max(netR.pos,audio.currentTime||0,pendingSeek||0);
+  let p=Math.max(netR.pos,audio.currentTime||0,pendingSeek||0),skip=false;
+  if(why==='stall'){if(Math.abs(p-netR.stuck)<1.5){skip=true;}netR.stuck=p;if(skip)p=Math.min(p+3,Math.max(0,(s.d||p+3)-1));}
+  netR.pos=p;
   clearTimeout(netR.t);switching=true;
-  if(!netR.n){playDiag('net-'+why);toast('通信が途切れました。つながり次第、続きから再生します');}
+  if(!netR.n||skip){playDiag((s.local?'local-':'net-')+why,{skip,lsrc:s.local?((LSRC.find(x=>x.id===s.src)||{}).kind||''):undefined});
+    toast(skip?'同じ所で止まるので、3 秒先から再生します':s.local?'再生が止まったので、ファイルを開き直して続きから再生します':'通信が途切れました。つながり次第、続きから再生します');}
   netR.t=setTimeout(netReload,[1,2,4,8,15,30,30,30][netR.n++]*1000);
   return true;
 }
@@ -3365,6 +3369,15 @@ function netReload(){
   clearTimeout(netR.t);netR.t=null;
   const s=cur();if(!s||s.dbid!==netR.dbid||castOn())return;
   if(!st.playing){switching=false;pendingSeek=netR.pos;return;}
+  const again=e=>{if(s===cur()&&st.playing&&!(e&&e.denied)&&netRetry('again'))return;if(s===cur()&&st.playing)netGiveUp(s,false,e&&e.message);};
+  if(s.local){
+    localFile(s,false).then(f=>{if(s!==cur()||!st.playing)return;
+      if(localUrlNow)URL.revokeObjectURL(localUrlNow);localUrlNow=URL.createObjectURL(f);
+      pendingSeek=netR.pos;audio.src=localUrlNow;audio.dataset.dbid=String(s.dbid);
+      audio.play().then(()=>{switching=false;}).catch(e=>{if(e.name!=='AbortError')again();});
+    }).catch(again);
+    return;
+  }
   const url=streamUrl(s);
   fetch(url,{method:'HEAD',cache:'no-store'}).then(r=>{
     if(s!==cur()||!st.playing)return;
@@ -3374,12 +3387,12 @@ function netReload(){
     audio.play().then(()=>{switching=false;}).catch(e=>{if(e.name!=='AbortError'&&!netRetry('again'))netGiveUp(s,false);});
   }).catch(()=>{if(s===cur()&&st.playing&&!netRetry('again'))netGiveUp(s,false);});
 }
-function netGiveUp(s,missing){
-  clearTimeout(netR.t);netR.t=null;pendingSeek=netR.pos;
+function netGiveUp(s,missing,msg){
+  clearTimeout(netR.t);netR.t=null;pendingSeek=netR.pos;delete audio.dataset.dbid;   // 次の再生ボタンで読み直す
   st.playing=false;switching=false;renderMini();renderXP();markPlaying();
   if('mediaSession' in navigator)navigator.mediaSession.playbackState='paused';
   playDiag(missing?'error':'net-giveup');
-  toast(missing?`再生できませんでした(${s.t})。ファイルが動かされていないか確認し、再スキャンしてください`:'NAS につながらないため停止しました。つながったら再生ボタンで続きから再生できます');
+  toast(missing?`再生できませんでした(${s.t})。ファイルが動かされていないか確認し、再スキャンしてください`:s.local?`この端末のファイルを読めないため停止しました${msg?`(${msg})`:''}。再生ボタンで続きから再生できます`:'NAS につながらないため停止しました。つながったら再生ボタンで続きから再生できます');
 }
 if(LIVE){const now=()=>{if(netR.t)netReload();};addEventListener('online',now);document.addEventListener('visibilitychange',()=>{if(!document.hidden)now();});}
 if(LIVE)setInterval(stallCheck,2000);
